@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="INFO">
+
+    <!--全局参数-->
+    <Properties>
+        <Property name="pattern">%d{yyyy-MM-dd HH:mm:ss,SSS} %5p %c{1}:%L - %m%n</Property>
+<!--         <Property name="logDir">/data/logs/logViewer</Property> -->
+        <Property name="logDir">logs</Property>
+    </Properties>
+
+    <Appenders>
+        <!-- 定义输出到控制台 -->
+        <Console name="console" target="SYSTEM_OUT" follow="true">
+            <!--控制台只输出level及以上级别的信息-->
+<!--             <ThresholdFilter level="debug" onMatch="ACCEPT" onMismatch="DENY"/> -->
+            <PatternLayout>
+                <Pattern>${pattern}</Pattern>
+            </PatternLayout>
+        </Console>
+        <!-- 同一来源的Appender可以定义多个RollingFile，定义按天存储日志 -->
+        <RollingFile name="rolling_file"
+                     fileName="${logDir}/logViewer.log"
+                     filePattern="${logDir}/logViewer_%d{yyyy-MM-dd}.log">
+            <ThresholdFilter level="INFO" onMatch="ACCEPT" onMismatch="DENY"/>
+            <PatternLayout>
+                <Pattern>${pattern}</Pattern>
+            </PatternLayout>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+            </Policies>
+            <!-- 日志保留策略，配置只保留七天 -->
+            <DefaultRolloverStrategy>
+                <Delete basePath="${logDir}/" maxDepth="1">
+                    <IfFileName glob="logViewer_*.log" />
+                    <IfLastModified age="7d" />
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingFile>
+    </Appenders>
+    
+      <Loggers>
+        <!--
+            Spring Security 启动时会警告："容器里存在 AuthenticationProvider bean，
+            UserDetailsService 不会被用于自动配置"。
+
+            这是**预期内**的，不用管：SecurityConfig 里是刻意显式声明 DaoAuthenticationProvider 的，
+            目的是把 UserDetailsService + PasswordEncoder + UserDetailsPasswordService
+            这三者钉在一起。靠自动装配的话，一旦以后再加入第二个 UserDetailsService
+            （比如给外部接口单独一套），自动装配会放弃、退回默认行为，而密码摘要的渐进式升级
+            会**静默失效** —— 不报错不告警，只是库里的密码永远停在旧格式。
+
+            降到 ERROR，免得每次启动都刷一行看起来像故障的告警。
+
+            ⚠ 名字必须写**内部类**的全名。
+            实际打日志的类是 InitializeUserDetailsBeanManagerConfigurer 里的静态内部类
+            $InitializeUserDetailsManagerConfigurer，而 Log4j2 的 logger 层级是按 '.' 切的：
+            "A.B.C$D" 的父节点是 "A.B"，**不是** "A.B.C"。所以写成外层类名的配置完全不起作用，
+            WARN 会照常漏出来 —— 而且不会报错，只是"配了没用"，很容易被当成配对了。
+            这里只精确点名内部类，不动整个 configuration 包，
+            是为了保留 InitializeAuthenticationProviderBeanManagerConfigurer 那条 INFO
+            ——它等于启动时确认了"我们显式声明的 AuthenticationProvider 真的被用上了"。
+        -->
+        <Logger name="org.springframework.security.config.annotation.authentication.configuration.InitializeUserDetailsBeanManagerConfigurer$InitializeUserDetailsManagerConfigurer"
+                level="ERROR"/>
+
+        <Root level="INFO">
+            <AppenderRef ref="console"/>
+            <AppenderRef ref="rolling_file"/>
+        </Root>
+    </Loggers>
+</Configuration>

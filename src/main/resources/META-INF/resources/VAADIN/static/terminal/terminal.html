@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8"/>
+    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <title>Web 终端</title>
+    <link rel="stylesheet" href="../xterm/xterm.css"/>
+    <style>
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            background: #1c1c1c;
+            overflow: hidden;
+            font-family: Consolas, Menlo, Monaco, "Courier New", monospace;
+        }
+
+        #app {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        #toolbar {
+            flex: 0 0 30px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 0 10px;
+            box-sizing: border-box;
+            background: #2b2b2b;
+            color: #cfcfcf;
+            font-size: 12px;
+            user-select: none;
+        }
+
+        #status.ok {
+            color: #7ec699;
+        }
+
+        #status.bad {
+            color: #ff6b6b;
+        }
+
+        #toolbar .spacer {
+            flex: 1 1 auto;
+        }
+
+        #toolbar a {
+            color: #8ab4f8;
+            cursor: pointer;
+            text-decoration: none;
+        }
+
+        #toolbar a:hover {
+            text-decoration: underline;
+        }
+
+        #actions a {
+            margin-left: 14px;
+        }
+
+        #appearance {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-right: 14px;
+        }
+
+        #fontsize {
+            color: #e0e0e0;
+            min-width: 2ch;
+            text-align: center;
+        }
+
+        /* 浅色主题：body 上挂 .light 类，工具栏/滚动条跟着换色 */
+        body.light {
+            background: #f5f5f5;
+        }
+
+        body.light #toolbar {
+            background: #e2e2e2;
+            color: #333;
+        }
+
+        body.light #fontsize {
+            color: #1e1e1e;
+        }
+
+        body.light #term .xterm-viewport::-webkit-scrollbar-thumb {
+            background: #bbb;
+        }
+
+        #searchbox {
+            display: none;
+            align-items: center;
+            gap: 8px;
+        }
+
+        #searchinput {
+            width: 190px;
+            height: 20px;
+            box-sizing: border-box;
+            background: #1c1c1c;
+            border: 1px solid #555;
+            border-radius: 3px;
+            color: #e0e0e0;
+            padding: 0 6px;
+            font-family: inherit;
+            font-size: 12px;
+            outline: none;
+        }
+
+        #searchinput:focus {
+            border-color: #8ab4f8;
+        }
+
+        #term {
+            flex: 1 1 auto;
+            min-height: 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        /* fit 插件是按 .xterm 自身的 padding 去算可用区域的，所以内边距加在这里 */
+        #term .xterm {
+            padding: 6px 0 0 8px;
+        }
+
+        #term .xterm-viewport::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        #term .xterm-viewport::-webkit-scrollbar-thumb {
+            background: #4a4a4a;
+            border-radius: 5px;
+        }
+
+        #term .xterm-viewport::-webkit-scrollbar-thumb:hover {
+            background: #5f5f5f;
+        }
+    </style>
+</head>
+<body>
+<div id="app">
+    <div id="toolbar">
+        <span id="status">正在连接...</span>
+        <span id="searchbox">
+            <input id="searchinput" type="text" placeholder="搜索终端内容" autocomplete="off" spellcheck="false"/>
+            <a id="searchprev" title="上一个（Shift+回车）">上一个</a>
+            <a id="searchnext" title="下一个（回车）">下一个</a>
+            <a id="searchclose" title="关闭（Esc）">关闭</a>
+        </span>
+        <span class="spacer"></span>
+        <span id="appearance" title="终端外观设置（随浏览器记住）">
+            <a id="fontminus" title="减小字号">A－</a>
+            <span id="fontsize">13</span>
+            <a id="fontplus" title="增大字号">A＋</a>
+            <a id="fontreset" title="恢复默认字号 13">重置</a>
+            <a id="themetoggle" title="切换深色 / 浅色主题">浅色</a>
+        </span>
+        <span id="actions">
+            <a id="find" title="在终端缓冲区里搜索（Ctrl+F）">搜索</a>
+            <a id="export" title="把整个终端缓冲区导出为文本">导出</a>
+            <a id="clear" title="清空屏幕与历史">清屏</a>
+            <a id="reconnect" style="display:none" title="使用同一连接信息重新建立会话">重新连接</a>
+        </span>
+    </div>
+    <div id="term"></div>
+</div>
+
+<script src="../xterm/xterm.js"></script>
+<script src="../xterm/addon-fit.js"></script>
+<script src="../xterm/addon-search.js"></script>
+<script src="../xterm/addon-webgl.js"></script>
+<script src="../xterm/addon-web-links.js"></script>
+<script src="../xterm/addon-serialize.js"></script>
+<script src="../xterm/addon-unicode11.js"></script>
+<script src="../xterm/addon-clipboard.js"></script>
+<script>
+    (function () {
+        'use strict';
+
+        if (typeof Terminal !== 'function') {
+            document.getElementById('status').textContent = '终端组件未加载：找不到 VAADIN/xterm/xterm.js';
+            document.getElementById('status').className = 'bad';
+            return;
+        }
+
+        var statusNode = document.getElementById('status');
+        var reconnectNode = document.getElementById('reconnect');
+        var searchBox = document.getElementById('searchbox');
+        var searchInput = document.getElementById('searchinput');
+        var termHost = document.getElementById('term');
+
+        var socket = null;
+        /** 服务端 notice 里的错误原文，onclose 时用它代替"连接已断开"这种没信息量的话 */
+        var lastError = '';
+
+        /* ---------------- 运行模式 ----------------
+         * 三个参数都有默认值，不传时行为与 SSH 终端完全一致。
+         * 容器日志（docker logs -f）与容器终端复用这个页面，只是换了端点、开了只读、
+         * 并打开 convertEol —— docker logs 没有 tty，输出只有 LF，
+         * 不开 convertEol 时 xterm 会把它渲染成一路向右下斜的阶梯。
+         */
+        function getParam(name) {
+            var search = window.location.search || '';
+            if (!search) {
+                return null;
+            }
+            try {
+                return new URLSearchParams(search).get(name);
+            } catch (e) {
+                var matched = new RegExp('[?&]' + name + '=([^&]*)').exec(search);
+                return matched ? decodeURIComponent(matched[1]) : null;
+            }
+        }
+
+        var wsEndpoint = getParam('ws') || '/ws/ssh';
+        var readOnlyMode = getParam('ro') === '1';
+        var convertEol = getParam('eol') === '1';
+
+        /* ---------------- 外观设置（字号 / 主题） ----------------
+         * 保存在浏览器 localStorage 里，按页面（同源共享）记住；
+         * 字号变化会改变 cols/rows，必须同时发 resize 给服务端，否则 vim/top 错位。 */
+        var DEFAULT_FONT_SIZE = 13;
+        var MIN_FONT_SIZE = 9;
+        var MAX_FONT_SIZE = 30;
+        var DARK_THEME = {
+            background: '#1c1c1c',
+            foreground: '#d4d4d4',
+            cursor: '#d4d4d4',
+            cursorAccent: '#1c1c1c',
+            selectionBackground: '#264f78',
+            black: '#000000', red: '#cd3131', green: '#0dbc79', yellow: '#e5e510',
+            blue: '#2472c8', magenta: '#bc3fbc', cyan: '#11a8cd', white: '#e5e5e5',
+            brightBlack: '#666666', brightRed: '#f14c4c', brightGreen: '#23d18b', brightYellow: '#f5f543',
+            brightBlue: '#3b8eea', brightMagenta: '#d670d6', brightCyan: '#29b8db', brightWhite: '#ffffff'
+        };
+        var LIGHT_THEME = {
+            background: '#f5f5f5',
+            foreground: '#1e1e1e',
+            cursor: '#1e1e1e',
+            cursorAccent: '#f5f5f5',
+            selectionBackground: '#b4d5fe',
+            black: '#000000', red: '#cd3131', green: '#009800', yellow: '#a67f00',
+            blue: '#2472c8', magenta: '#a315a5', cyan: '#0086b3', white: '#555555',
+            brightBlack: '#666666', brightRed: '#f14c4c', brightGreen: '#23d18b', brightYellow: '#b5a500',
+            brightBlue: '#3b8eea', brightMagenta: '#d670d6', brightCyan: '#29b8db', brightWhite: '#333333'
+        };
+
+        function savedFontSize() {
+            var parsed = parseInt(localStorage.getItem('term.fontSize'), 10);
+            if (isNaN(parsed)) {
+                return DEFAULT_FONT_SIZE;
+            }
+            return Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, parsed));
+        }
+
+        function savedLightTheme() {
+            return localStorage.getItem('term.light') === '1';
+        }
+
+        var fontSize = savedFontSize();
+        var lightTheme = savedLightTheme();
+
+        var term = new Terminal({
+            cursorBlink: !readOnlyMode,
+            cursorStyle: 'bar',
+            fontSize: fontSize,
+            fontFamily: 'Consolas, Menlo, Monaco, "Courier New", monospace',
+            lineHeight: 1.2,
+            scrollback: 20000,
+            convertEol: convertEol,
+            // unicode11 插件要写 term.unicode.activeVersion，属于实验 API，必须显式打开
+            allowProposedApi: true,
+            macOptionIsMeta: true,
+            theme: lightTheme ? LIGHT_THEME : DARK_THEME
+        });
+
+        var fitAddon = new FitAddon.FitAddon();
+        var searchAddon = new SearchAddon.SearchAddon();
+        var serializeAddon = new SerializeAddon.SerializeAddon();
+
+        term.loadAddon(fitAddon);
+        term.loadAddon(searchAddon);
+        term.loadAddon(serializeAddon);
+
+        // 日志里出现的 ip、url 直接可点
+        try {
+            term.loadAddon(new WebLinksAddon.WebLinksAddon());
+        } catch (e) {
+        }
+
+        // 内置宽度表把不少 emoji 当单宽，unicode11 更准，中文对齐问题也一并解决
+        try {
+            term.loadAddon(new Unicode11Addon.Unicode11Addon());
+            term.unicode.activeVersion = '11';
+        } catch (e) {
+        }
+
+        term.open(termHost);
+
+        // WebGL 渲染在软渲染 / 远程桌面 / 老显卡上会抛异常，失败就退回 DOM 渲染，不能因此白屏
+        try {
+            var webglAddon = new WebglAddon.WebglAddon();
+            webglAddon.onContextLoss(function () {
+                webglAddon.dispose();
+            });
+            term.loadAddon(webglAddon);
+        } catch (e) {
+        }
+
+        // 剪贴板插件走 navigator.clipboard，内网 http 访问时该对象不存在，必须判空
+        try {
+            if (window.ClipboardAddon && navigator.clipboard) {
+                term.loadAddon(new ClipboardAddon.ClipboardAddon());
+            }
+        } catch (e) {
+        }
+
+        function setStatus(text, ok) {
+            statusNode.textContent = text;
+            statusNode.className = ok === true ? 'ok' : (ok === false ? 'bad' : '');
+        }
+
+        function timeLabel() {
+            var d = new Date();
+            function p(n) {
+                return (n < 10 ? '0' : '') + n;
+            }
+            return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+        }
+
+        /** 提示写进终端内容里，用颜色和远端输出区分开 */
+        function writeNotice(text, isError) {
+            if (!text) {
+                return;
+            }
+            var color = isError ? '\u001b[31m' : '\u001b[33m';
+            term.write('\r\n' + color + '[' + timeLabel() + '] ' + text + '\u001b[0m\r\n');
+        }
+
+        function fit() {
+            // 容器还没有尺寸时（页面刚挂载、所在 tab 被隐藏）proposeDimensions 会返回空，直接忽略
+            try {
+                fitAddon.fit();
+            } catch (e) {
+            }
+        }
+
+        /* ---------------- websocket ---------------- */
+
+        function buildWsUrl() {
+            var path = window.location.pathname || '';
+            var idx = path.indexOf('/VAADIN/');
+            var contextPath = idx >= 0 ? path.substring(0, idx) : '';
+            var scheme = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+            var search = window.location.search || '';
+            var sep = search ? (search.charAt(0) === '?' ? '&' : '?') : '?';
+            var endpoint = wsEndpoint.charAt(0) === '/' ? wsEndpoint : '/' + wsEndpoint;
+            return scheme + window.location.host + contextPath + endpoint
+                + search + sep + 'cols=' + term.cols + '&rows=' + term.rows;
+        }
+
+        function sendResize() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({resize: {cols: term.cols, rows: term.rows}}));
+            }
+        }
+
+        function connect() {
+            if (socket) {
+                try {
+                    socket.close();
+                } catch (e) {
+                }
+                socket = null;
+            }
+            lastError = '';
+            reconnectNode.style.display = 'none';
+            setStatus('正在连接...');
+
+            var url;
+            try {
+                url = buildWsUrl();
+            } catch (e) {
+                setStatus('连接地址不合法：' + e.message, false);
+                reconnectNode.style.display = 'inline';
+                return;
+            }
+
+            try {
+                socket = new WebSocket(url);
+            } catch (e) {
+                setStatus('连接地址不合法：' + e.message, false);
+                reconnectNode.style.display = 'inline';
+                return;
+            }
+
+            // 不加这一行，下行二进制帧会以 Blob 形式到达，Uint8Array 包不住
+            socket.binaryType = 'arraybuffer';
+
+            socket.onopen = function () {
+                setStatus('已连接 ' + term.cols + '×' + term.rows, true);
+                fit();
+                sendResize();
+                term.focus();
+            };
+
+            socket.onmessage = function (event) {
+                // 约定：文本帧是控制消息（JSON），二进制帧是 pty 原始字节
+                if (typeof event.data === 'string') {
+                    handleNotice(event.data);
+                    return;
+                }
+                // 字节直接交给 xterm.js 自己解码，跨 TCP 块被切断的多字节汉字由它拼接
+                term.write(new Uint8Array(event.data));
+            };
+
+            socket.onclose = function (event) {
+                var reason = lastError || ('连接已断开（code ' + event.code + '）');
+                setStatus(reason, false);
+                reconnectNode.style.display = 'inline';
+                writeNotice(reason, true);
+            };
+
+            socket.onerror = function () {
+                // onerror 不带原因，真正的信息在服务端随后发来的 notice 里
+                setStatus('连接异常', false);
+            };
+        }
+
+        function handleNotice(raw) {
+            var msg;
+            try {
+                msg = JSON.parse(raw);
+            } catch (e) {
+                return;
+            }
+            if (!msg || msg.t !== 'notice') {
+                return;
+            }
+            var isError = msg.lv === 'err';
+            var text = msg.v || '';
+            if (isError) {
+                lastError = text;
+                setStatus(text, false);
+            }
+            writeNotice(text, isError);
+        }
+
+        term.onData(function (data) {
+            // 只读视图（容器日志）不回发任何按键
+            if (readOnlyMode) {
+                return;
+            }
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({data: data}));
+            }
+        });
+
+        term.onResize(function () {
+            // 尺寸变化要告诉服务端，否则远端 vim / top 的排版会错位
+            sendResize();
+        });
+
+        /* ---------------- 复制粘贴与快捷键 ---------------- */
+
+        function fallbackCopy(text) {
+            var ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.top = '-1000px';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.select();
+            try {
+                document.execCommand('copy');
+            } catch (e) {
+            }
+            document.body.removeChild(ta);
+        }
+
+        function copyText(text) {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(text).catch(function () {
+                    fallbackCopy(text);
+                });
+            } else {
+                fallbackCopy(text);
+            }
+        }
+
+        function pasteText() {
+            if (readOnlyMode) {
+                return;
+            }
+            if (navigator.clipboard && navigator.clipboard.readText) {
+                navigator.clipboard.readText().then(function (text) {
+                    if (text && socket && socket.readyState === WebSocket.OPEN) {
+                        socket.send(JSON.stringify({data: text}));
+                    }
+                }).catch(function () {
+                });
+            }
+        }
+
+        term.attachCustomKeyEventHandler(function (event) {
+            if (event.type !== 'keydown' || !event.ctrlKey) {
+                return true;
+            }
+            var key = (event.key || '').toLowerCase();
+
+            // Ctrl+Shift+C / Ctrl+Shift+V：不与 shell 的 Ctrl+C、Ctrl+V 抢
+            if (event.shiftKey && key === 'c') {
+                var selection = term.getSelection();
+                if (selection) {
+                    copyText(selection);
+                    term.clearSelection();
+                    return false;
+                }
+                return true;
+            }
+            if (event.shiftKey && key === 'v') {
+                pasteText();
+                return false;
+            }
+            // Ctrl+F 打开搜索：本项目是日志查看场景，搜索比 readline 的前移一个字符更有用
+            if (!event.shiftKey && key === 'f') {
+                toggleSearch(true);
+                return false;
+            }
+            return true;
+        });
+
+        /* ---------------- 搜索 ---------------- */
+
+        function toggleSearch(show) {
+            var visible = (show === undefined) ? (searchBox.style.display !== 'flex') : show;
+            searchBox.style.display = visible ? 'flex' : 'none';
+            if (visible) {
+                searchInput.focus();
+                searchInput.select();
+            } else {
+                term.focus();
+            }
+        }
+
+        function runSearch(backward) {
+            var query = searchInput.value;
+            if (!query) {
+                return;
+            }
+            var options = {caseSensitive: false, incremental: true};
+            try {
+                searchAddon[backward ? 'findPrevious' : 'findNext'](query, {
+                    caseSensitive: false,
+                    incremental: true,
+                    decorations: {
+                        matchOverviewRuler: '#8ab4f8',
+                        activeMatchColorOverviewRuler: '#ffb454'
+                    }
+                });
+            } catch (e) {
+                // 个别版本不接受 decorations，退化成纯高亮
+                try {
+                    searchAddon[backward ? 'findPrevious' : 'findNext'](query, options);
+                } catch (e2) {
+                }
+            }
+        }
+
+        /* ---------------- 工具栏 ---------------- */
+
+        document.getElementById('find').onclick = function () {
+            toggleSearch();
+        };
+        document.getElementById('searchnext').onclick = function () {
+            runSearch(false);
+        };
+        document.getElementById('searchprev').onclick = function () {
+            runSearch(true);
+        };
+        document.getElementById('searchclose').onclick = function () {
+            toggleSearch(false);
+        };
+
+        searchInput.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                runSearch(e.shiftKey);
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                toggleSearch(false);
+            }
+        });
+        searchInput.addEventListener('input', function () {
+            runSearch(false);
+        });
+
+        document.getElementById('clear').onclick = function () {
+            // clear 只清屏与滚动历史，不重置远端 shell 的状态
+            term.clear();
+            term.focus();
+        };
+
+        document.getElementById('export').onclick = function () {
+            var text;
+            try {
+                text = serializeAddon.serialize();
+            } catch (e) {
+                text = '';
+            }
+            if (!text) {
+                setStatus('终端缓冲区为空，无可导出内容', false);
+                return;
+            }
+            var blob = new Blob([text], {type: 'text/plain;charset=utf-8'});
+            var link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = 'terminal-' + Date.now() + '.txt';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            setTimeout(function () {
+                URL.revokeObjectURL(link.href);
+            }, 1000);
+        };
+
+        reconnectNode.onclick = function () {
+            term.reset();
+            connect();
+        };
+
+        /* ---------------- 外观设置控件 ---------------- */
+
+        var fontLabel = document.getElementById('fontsize');
+        var themeToggle = document.getElementById('themetoggle');
+
+        function renderAppearance() {
+            fontLabel.textContent = String(fontSize);
+            themeToggle.textContent = lightTheme ? '深色' : '浅色';
+        }
+
+        function applyFontSize(size) {
+            fontSize = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, size));
+            term.options.fontSize = fontSize;
+            // 字号变了 cols/rows 会变，必须同步服务端，否则 vim / top 排版错位
+            fit();
+            sendResize();
+            term.focus();
+            localStorage.setItem('term.fontSize', String(fontSize));
+            renderAppearance();
+        }
+
+        function applyTheme(light) {
+            lightTheme = light;
+            term.options.theme = light ? LIGHT_THEME : DARK_THEME;
+            document.body.classList.toggle('light', light);
+            localStorage.setItem('term.light', light ? '1' : '0');
+            renderAppearance();
+        }
+
+        document.getElementById('fontminus').onclick = function () {
+            applyFontSize(fontSize - 1);
+        };
+        document.getElementById('fontplus').onclick = function () {
+            applyFontSize(fontSize + 1);
+        };
+        document.getElementById('fontreset').onclick = function () {
+            applyFontSize(DEFAULT_FONT_SIZE);
+        };
+        themeToggle.onclick = function () {
+            applyTheme(!lightTheme);
+        };
+
+        // 打开页面就按上次保存的外观渲染（字号已在构造参数里生效，这里补主题类名和文案）
+        document.body.classList.toggle('light', lightTheme);
+        renderAppearance();
+
+        /* ---------------- 尺寸自适应 ---------------- */
+
+        var resizeTimer = null;
+        window.addEventListener('resize', function () {
+            if (resizeTimer) {
+                clearTimeout(resizeTimer);
+            }
+            resizeTimer = setTimeout(fit, 120);
+        });
+
+        // 容器尺寸还会因为外层布局变化而改变（比如 Vaadin 的 tab 切换、侧栏收起），
+        // 单靠 window.resize 抓不到，用 ResizeObserver 兜住
+        if (window.ResizeObserver) {
+            new ResizeObserver(function () {
+                fit();
+            }).observe(termHost);
+        }
+
+        connect();
+    })();
+</script>
+</body>
+</html>

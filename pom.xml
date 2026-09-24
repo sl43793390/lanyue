@@ -1,0 +1,332 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>com.sl</groupId>
+    <artifactId>lanyue</artifactId>
+    <version>1.0-SNAPSHOT</version>
+
+    <packaging>jar</packaging>
+
+    <properties>
+        <java.version>21</java.version>
+        <vaadin.version>24.10.10</vaadin.version>
+    </properties>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.5.0</version>
+    </parent>
+
+    <repositories>
+        <!-- 只保留 Vaadin 的 addons 仓库；central 不再重声明，重声明会顶掉 settings.xml 里配的镜像 -->
+        <repository>
+            <id>vaadin-directory</id>
+            <url>https://maven.vaadin.com/vaadin-addons</url>
+        </repository>
+    </repositories>
+
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.vaadin</groupId>
+                <artifactId>vaadin-bom</artifactId>
+                <version>${vaadin.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!--
+        日志统一走 Log4j2（配置文件 src/main/resources/log4j2.xml），
+        不再使用 Logback，也不再使用 Log4j 1.x（slf4j-log4j12 / reload4j）。
+
+        这里有一条必须守住的规则：
+        凡是会传递引入 spring-boot-starter-logging 的依赖，都要显式排掉它。
+        因为 spring-boot-starter-logging 会带进 logback-classic，而 logback-classic 和
+        log4j-slf4j2-impl 都是 SLF4J 的 provider，两者同时在 classpath 上时 SLF4J 只会
+        打印 "Class path contains multiple SLF4J providers" 然后任选一个，行为不确定。
+        以后新增 Spring Boot starter 时，记得在这里同步加 exclusion。
+    -->
+    <dependencies>
+        <!-- Vaadin -->
+        <dependency>
+            <groupId>com.vaadin</groupId>
+            <!-- Replace artifactId with vaadin-core to use only free components -->
+            <artifactId>vaadin</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.vaadin</groupId>
+            <artifactId>vaadin-spring-boot-starter</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-logging</artifactId>
+                </exclusion>
+                <!--
+                    Vaadin 的 starter 会把 log4j-to-slf4j 作为直接依赖引进来（把 log4j2 API 桥到 SLF4J）。
+                    本项目已选 Log4j2 作为真正的后端，log4j-to-slf4j 与 log4j-slf4j2-impl 同时存在会形成
+                    slf4j -> log4j2 -> slf4j 的环，必须排掉。排掉后 log4j-api 由 log4j-core 提供，日志直落 Log4j2。
+                -->
+                <exclusion>
+                    <groupId>org.apache.logging.log4j</groupId>
+                    <artifactId>log4j-to-slf4j</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!--
+            Web 容器。Vaadin 的 starter 会传递引入它，这里显式声明是为了能挂 exclusion：
+            只有显式声明的依赖才能保证排掉 starter-logging。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-logging</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-logging</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-logging</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-logging</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!--
+            ⚠ 不要在这里声明 ServerEndpointExporter，也不要为它引 spring-websocket。
+
+            1) spring-websocket 已经由 vaadin-spring 传递引入（vaadin-spring 的 pom 里就有它，
+               版本由 Boot BOM 管到 6.2.7）。jakarta.websocket 的 API 则由
+               starter-web -> starter-tomcat -> tomcat-embed-websocket 提供（10.1.41 里有 55 个
+               jakarta.websocket 类，已核对 jar）。所以 @ServerEndpoint 的编译期依赖是齐的。
+
+            2) Vaadin 24 自己就注册了一个 ServerEndpointExporter 的子类：
+               com.vaadin.flow.spring.SpringBootAutoConfiguration#websocketEndpointDeployer()
+               返回 new com.vaadin.flow.spring.VaadinWebsocketEndpointExporter()。
+               已反汇编核对：该方法上只有 @Bean，**没有 @ConditionalOnMissingBean**，
+               类级条件也只有 @ConditionalOnClass(ServletContextInitializer)（恒真）。
+               也就是说它无条件生效。
+
+            踩过的坑：照 Spring Boot 文档自己加了一个 ServerEndpointExporter @Bean 之后，
+            ServerEndpointExporter.registerEndpoints() 会按 @ServerEndpoint 注解扫出端点类并注册，
+            于是同一个路径被两个 exporter 各注册一次，Tomcat 直接拒绝并让应用启动失败：
+              jakarta.websocket.DeploymentException: Multiple Endpoints may not be deployed to the same
+              path [/ws/docker] : existing endpoint was [class com.sl.controller.DockerTermHandler]
+              and new endpoint is [class com.sl.controller.DockerTermHandler]
+            结论：@ServerEndpoint 在这个项目里**开箱即用**，什么都不用配。
+        -->
+
+        <!-- 日志：Log4j2，版本由 Spring Boot BOM 管理；配置见 src/main/resources/log4j2.xml -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-log4j2</artifactId>
+        </dependency>
+
+        <!-- Testing -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-logging</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <dependency>
+            <groupId>com.vaadin.componentfactory</groupId>
+            <artifactId>enhanced-rich-text-editor</artifactId>
+            <version>5.0.0</version>
+        </dependency>
+
+        <!--        数据源链接池-->
+        <dependency>
+            <groupId>com.zaxxer</groupId>
+            <artifactId>HikariCP</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.xerial</groupId>
+            <artifactId>sqlite-jdbc</artifactId>
+            <version>3.46.1.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-spring-boot3-starter</artifactId>
+            <version>3.5.12</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-logging</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!--
+            分页插件（PaginationInnerInterceptor）从 MyBatis-Plus 3.5.9 起被移出
+            mybatis-plus-extension，单独放到这个模块里，因为它依赖 JSqlParser 做分页 SQL 改写，
+            而 JSqlParser 的版本需要由使用方自己选。少了它编译就报
+            「找不到符号: 类 PaginationInnerInterceptor」。
+        -->
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-jsqlparser</artifactId>
+            <version>3.5.12</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.hutool</groupId>
+            <artifactId>hutool-all</artifactId>
+            <version>5.8.37</version>
+        </dependency>
+
+        <!-- ================================================================
+             以下为「日志查看 / 文件管理 / 应用发布」平台需要的功能依赖，
+             从旧项目 logviewer 平移过来。版本沿用旧项目已验证过的组合。
+             ================================================================ -->
+
+        <!-- SSH：JSch 负责 SFTP 与远程命令（含 pty 终端），sshj 负责远程文件管理。
+             mwiede 的 fork 修了大量上游 CVE，别换回 com.jcraft:jsch。 -->
+        <dependency>
+            <groupId>com.github.mwiede</groupId>
+            <artifactId>jsch</artifactId>
+            <version>0.2.17</version>
+        </dependency>
+        <dependency>
+            <groupId>com.hierynomus</groupId>
+            <artifactId>sshj</artifactId>
+            <version>0.31.0</version>
+        </dependency>
+
+        <!-- JSON：远程接口响应解析、compose 元信息文件读写 -->
+        <dependency>
+            <groupId>com.alibaba.fastjson2</groupId>
+            <artifactId>fastjson2</artifactId>
+            <version>2.0.65</version>
+        </dependency>
+
+        <!-- Excel 导出。不用 EasyExcel：它依赖 cglib，在 JDK 17+ 会因模块访问限制
+             抛 InaccessibleObjectException，导出按钮直接报错。POI 没有这个依赖。 -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.4.1</version>
+        </dependency>
+
+        <!-- 国密摘要：加密工具页的 SM3 / SM4 等算法由 BC provider 提供。
+             用 jdk18on 而不是旧项目里的 jdk15on（那是给 JDK 8 之前的老包名，且版本停在 1.60）。 -->
+        <dependency>
+            <groupId>org.bouncycastle</groupId>
+            <artifactId>bcprov-jdk18on</artifactId>
+            <version>1.81</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <defaultGoal>spring-boot:run</defaultGoal>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <mainClass>com.sl.Application</mainClass>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>com.vaadin</groupId>
+                <artifactId>vaadin-maven-plugin</artifactId>
+                <version>${vaadin.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>prepare-frontend</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <!--
+                生产打包：额外跑一次 build-frontend，把前端资源编译进产物。
+                开发时用默认的 spring-boot:run 即可，前端由 Vite dev server 实时编译。
+            -->
+            <id>production</id>
+            <dependencies>
+                <dependency>
+                    <!-- Exclude development dependencies from production -->
+                    <groupId>com.vaadin</groupId>
+                    <artifactId>vaadin-core</artifactId>
+                    <exclusions>
+                        <exclusion>
+                            <groupId>com.vaadin</groupId>
+                            <artifactId>vaadin-dev</artifactId>
+                        </exclusion>
+                    </exclusions>
+                </dependency>
+            </dependencies>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.vaadin</groupId>
+                        <artifactId>vaadin-maven-plugin</artifactId>
+                        <version>${vaadin.version}</version>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>build-frontend</goal>
+                                </goals>
+                                <phase>compile</phase>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
+</project>

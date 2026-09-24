@@ -1,0 +1,80 @@
+# ===== Java =====
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+hs_err_pid*
+replay_pid*
+
+# ===== Maven =====
+target/
+pom.xml.tag
+pom.xml.releaseBackup
+pom.xml.versionsBackup
+pom.xml.next
+release.properties
+dependency-reduced-pom.xml
+buildNumber.properties
+.mvn/timing.properties
+.mvn/wrapper/maven-wrapper.jar
+
+# ===== Vaadin =====
+# Vaadin 前端构建输出目录
+src/main/webapp/VAADIN/build/
+src/main/webapp/VAADIN/webapp/
+# Vaadin 24 前端资源生成目录
+src/main/frontend/generated/
+src/main/frontend/generated-flow-imports.*
+# Vaadin 生产构建产物
+src/main/bundles/
+# 开发模式缓存
+.vaadin/
+# Node/npm（Vaadin 前端工具链）
+node_modules/
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+webpack.generated.js
+vite.generated.ts
+types.d.ts
+tsconfig.json
+
+# ===== IDE =====
+# IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+out/
+
+# Eclipse
+.settings/
+.project
+.classpath
+.factorypath
+.apt_generated/
+.apt_generated_tests/
+bin/
+
+# VS Code
+.vscode/
+
+# NetBeans
+nbproject/private/
+nbbuild/
+dist/
+nbdist/
+.nb-gradle/
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# ===== 日志与临时文件 =====
+*.log
+logs/
+*.tmp
+*.bak
