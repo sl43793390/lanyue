@@ -11,9 +11,9 @@ import com.sl.ui.component.ViewBase;
 import com.sl.ui.component.UiFactory;
 import com.sl.util.Constants;
 import com.sl.util.SSHClientUtil;
+import com.sl.util.SshConnectionPool;
 import com.sl.util.Util;
 import com.vaadin.flow.component.Component;
-import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.Grid;
@@ -65,8 +65,6 @@ public class TomcatMgmtView extends ViewBase {
 
     /** 为 null 时是本机模式（从菜单打开）；从服务器列表行内按钮进来则带目标机器，走 SSH */
     private transient ConnectionInfo presetHost;
-    /** 远程模式的 SSH 连接：懒建（第一次执行命令时），页面关闭时断开 */
-    private transient SSHClientUtil ssh;
 
     private final transient TomcatInfoMapper tomcatInfoMapper;
 
@@ -83,15 +81,12 @@ public class TomcatMgmtView extends ViewBase {
         return presetHost != null;
     }
 
-    /** 远程 SSH 连接（懒建）。可能被后台线程并发调用，加锁防重复建连。 */
+    /** 远程 SSH 连接：走共享连接池（懒建、跨页面复用，最后使用 10 分钟后池自动断开）。 */
     private synchronized SSHClientUtil ensureSsh() throws IOException {
         if (presetHost == null) {
             return null;
         }
-        if (ssh == null) {
-            ssh = SSHClientUtil.connect(presetHost);
-        }
-        return ssh;
+        return SshConnectionPool.acquire(presetHost);
     }
 
     /**
@@ -109,15 +104,6 @@ public class TomcatMgmtView extends ViewBase {
             log.warn("远程命令执行失败：{}", e.getMessage());
             return List.of("[远程命令执行失败] " + e.getMessage());
         }
-    }
-
-    @Override
-    protected void onDetach(DetachEvent detachEvent) {
-        if (ssh != null) {
-            ssh.closeConnection();
-            ssh = null;
-        }
-        super.onDetach(detachEvent);
     }
 
     private final Grid<TomcatInfoEntity> grid = UiFactory.grid(TomcatInfoEntity.class);

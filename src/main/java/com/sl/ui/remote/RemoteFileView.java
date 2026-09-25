@@ -10,10 +10,12 @@ import com.sl.ui.component.ViewBase;
 import com.sl.util.CharsetDetector;
 import com.sl.util.Constants;
 import com.sl.util.SSHClientUtil;
+import com.sl.util.SshConnectionPool;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.button.Button;
+import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Span;
@@ -28,8 +30,10 @@ import com.vaadin.flow.spring.annotation.SpringComponent;
 import com.vaadin.flow.spring.annotation.UIScope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
+import org.springframework.util.unit.DataSize;
 
 import java.io.File;
 import java.io.IOException;
@@ -38,17 +42,24 @@ import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 
 /**
  * 远程文件管理（SFTP）。
  * <p>
  * 对应旧项目 {@code com.so.component.remote.RemoteFileMgmtComponent}：
- * 选一台机器，浏览远端目录、上传、下载、重命名、新建目录、删除；
+ * 选一台机器，浏览远端目录、上传、下载、重命名、新建目录、删除、批量删除、执行命令；
  * 另有本页新增的「编辑」：纯文本、大小不超过 {@code pure.text.type.maxsize} 的文件
  * （扩展名白名单见 {@code pure.text.type}）可以弹 textarea 在线改，保存前先探测编码，
  * 写回用同一组 charset + BOM，保证不会改出乱码。
- * 连接与文件操作都走 {@link SSHClientUtil}（sshj）：目录列表用 SFTP {@code ls}，
- * 上传/下载/改名/建目录走 SFTP，删除目录用 {@code rm -rf}（SFTP 没有递归删除）。
+ * 连接与文件操作都走 {@link SshConnectionPool} 共享连接池（底层 sshj）：
+ * 目录列表用 SFTP {@code ls}，上传/下载/改名/建目录走 SFTP，
+ * 删除目录与执行命令用 {@code exec}。连接不随页面关闭断开，由池统一管理，
+ * 空闲 10 分钟自动回收。
+ * <p>
+ * 默认不显示以 {@code .} 开头的隐藏文件，工具栏的「显示隐藏文件」勾选后展示；
+ * 上传的大小上限取自 {@code spring.servlet.multipart.max-file-size}，在控件上
+ * 做客户端预检，超限直接弹窗提示（后台错误也统一弹窗）。
  * <p>
  * 与旧实现的差异：
  * <ul>
@@ -78,7 +89,9 @@ public class RemoteFileView extends ViewBase {
     }
 
     private transient ConnectionInfo presetHost;
-    private transient SSHClientUtil ssh;
+
+    /** 上传大小上限（spring.servlet.multipart.max-file-size，默认 100MB），超限在客户端就弹窗拦截 */
+    private final transient DataSize maxUploadSize;
 
     /** 纯文本编辑白名单（application.properties: pure.text.type / pure.text.type.maxsize） */
     private final transient PureTextProperties pureText;
@@ -86,6 +99,8 @@ public class RemoteFileView extends ViewBase {
     private final TextField pathField = new TextField();
     private final Span statusLabel = new Span();
     private final Grid<FileRow> grid = UiFactory.grid(FileRow.class);
+    /** 勾选后展示以 . 开头的隐藏文件，默认不显示 */
+    private final Checkbox showHiddenFiles = new Checkbox("显示隐藏文件");
     /** 连接/读目录的等待遮罩：SSH 建连可能要 10~30 秒，没有可见反馈用户会以为功能坏了 */
     private final LoadingOverlay loadingOverlay = new LoadingOverlay("正在建立连接，请稍候……");
     /** Grid 的列是「行数据 → 组件」的纯函数，DTO 不持 UI 字段；当前目录放这儿 */
@@ -95,8 +110,10 @@ public class RemoteFileView extends ViewBase {
         this.presetHost = info;
     }
 
-    public RemoteFileView(PureTextProperties pureTextProperties) {
+    public RemoteFileView(PureTextProperties pureTextProperties,
+                          @Value("${spring.servlet.multipart.max-file-size:100MB}") DataSize maxUploadSize) {
         this.pureText = pureTextProperties;
+        this.maxUploadSize = maxUploadSize;
     }
 
     private boolean built = false;
@@ -129,8 +146,13 @@ public class RemoteFileView extends ViewBase {
         Button upBtn = UiFactory.button("上一级", this::goUp);
         Button mkdirBtn = UiFactory.button("新建目录", () -> promptNewDir(currentPath));
         Button reloadBtn = UiFactory.button("刷新", () -> navigate(currentPath));
+        showHiddenFiles.setTooltipText("勾选后显示以 . 开头的隐藏文件");
+        showHiddenFiles.addValueChangeListener(e -> navigate(currentPath));
+        Button execBtn = UiFactory.button("执行命令", this::openExecDialog);
+        Button batchDeleteBtn = UiFactory.danger("批量删除", this::confirmBatchDelete);
 
-        HorizontalLayout bar = toolbar(pathField, goBtn, upBtn, mkdirBtn, reloadBtn, spacer(), statusLabel);
+        HorizontalLayout bar = toolbar(pathField, goBtn, upBtn, mkdirBtn, reloadBtn, showHiddenFiles,
+                execBtn, spacer(), batchDeleteBtn, statusLabel);
         add(bar);
 
         buildGrid();
@@ -159,6 +181,8 @@ public class RemoteFileView extends ViewBase {
     }
 
     private void buildGrid() {
+        // 多选模式：表格左侧自动出现勾选列，配合「批量删除」按钮
+        grid.setSelectionMode(Grid.SelectionMode.MULTI);
         grid.addComponentColumn(this::nameCell).setHeader("名称").setAutoWidth(true).setFlexGrow(1);
         grid.addColumn(FileRow::sizeText).setHeader("大小").setAutoWidth(true);
         grid.addColumn(FileRow::mtime).setHeader("修改时间").setAutoWidth(true);
@@ -211,10 +235,9 @@ public class RemoteFileView extends ViewBase {
     // ------------------------------------------------------------------
 
     private synchronized SSHClientUtil ensureSsh() throws IOException {
-        if (ssh == null) {
-            ssh = SSHClientUtil.connect(presetHost);
-        }
-        return ssh;
+        // 连接进共享池（SshConnectionPool）：按 主机:端口:用户 复用，页面关闭不断开，
+        // 最后一次使用后保留 10 分钟，超时由池自动断开
+        return SshConnectionPool.acquire(presetHost);
     }
 
     private void navigate(String target) {
@@ -228,8 +251,13 @@ public class RemoteFileView extends ViewBase {
         getUI().ifPresent(ui -> new Thread(() -> {
             List<FileRow> rows = new ArrayList<>();
             String failure = null;
+            boolean showHidden = showHiddenFiles.getValue();
             try {
                 for (net.schmizz.sshj.sftp.RemoteResourceInfo info : ensureSsh().listFiles(path)) {
+                    // 默认不显示隐藏文件：以 . 开头的一律跳过（勾选「显示隐藏文件」后展示）
+                    if (!showHidden && info.getName().startsWith(".")) {
+                        continue;
+                    }
                     // sshj 0.31：大小/时间在 FileAttributes 上，不在 RemoteResourceInfo 上
                     net.schmizz.sshj.sftp.FileAttributes attrs = info.getAttributes();
                     long mtimeSec = attrs.getMtime();
@@ -335,9 +363,13 @@ public class RemoteFileView extends ViewBase {
         upload.setI18n(UiFactory.UPLOAD_I18N);
         upload.setDropAllowed(false);
         upload.setMaxFiles(1);
+        // 客户端预检大小上限：超过 spring.servlet.multipart.max-file-size 的文件
+        // 在浏览器端就拒绝，触发下面的 fileRejectedListener 弹窗提示，不会白传一半
+        upload.setMaxFileSize((int) Math.min(maxUploadSize.toBytes(), Integer.MAX_VALUE));
         upload.addAllFinishedListener(event -> upload.clearFileList());
         upload.addFileRejectedListener(event ->
-                Dialogs.warn("上传被拒绝：" + StrUtil.emptyToDefault(event.getErrorMessage(), "不满足上传限制")));
+                Dialogs.warn("上传被拒绝：" + StrUtil.emptyToDefault(event.getErrorMessage(), "不满足上传限制")
+                        + "（大小上限 " + maxUploadSize.toMegabytes() + "MB）"));
         upload.getElement().setAttribute("title", "上传文件到 " + targetDir);
         return upload;
     }
@@ -604,12 +636,109 @@ public class RemoteFileView extends ViewBase {
         void run() throws Exception;
     }
 
+    // ------------------------------------------------------------------
+    // 执行命令（在当前显示的目录下执行）
+    // ------------------------------------------------------------------
+
+    /** 「执行命令」弹窗：命令在当前浏览的目录（currentPath）下执行，输出就地展示。 */
+    private void openExecDialog() {
+        if (!hasPermission(Constants.UPDATE)) {
+            Dialogs.warn("权限不足，无法执行命令");
+            return;
+        }
+        Dialog dialog = new Dialog();
+        dialog.setHeaderTitle("执行命令");
+        dialog.setWidth("860px");
+        dialog.setHeight("750px");
+
+        TextField cmdField = UiFactory.textField("命令", "如：ls -l、du -sh *、tail -n 100 xxx.log", "640px");
+        Span hint = new Span("命令将在当前显示的目录 " + currentPath + " 下执行（内部以 cd 进入该目录再执行）。");
+        hint.addClassName("view-subtitle");
+
+        TextArea outputArea = UiFactory.textArea();
+        outputArea.setWidthFull();
+        outputArea.setHeight("450px");
+        outputArea.setReadOnly(true);
+        outputArea.getStyle().set("--lumo-font-family", "Consolas, 'Courier New', monospace");
+
+        Button runBtn = new Button("执行");
+        runBtn.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY);
+        runBtn.addClickListener(event -> {
+            String cmd = StrUtil.trimToNull(cmdField.getValue());
+            if (cmd == null) {
+                Dialogs.warn("请输入要执行的命令");
+                return;
+            }
+            // cd 进当前目录再执行；目录名带单引号等特殊字符也要安全拼接
+            String remote = "cd '" + currentPath.replace("'", "'\\''") + "' && " + cmd;
+            runBtn.setEnabled(false);
+            outputArea.setValue("正在执行……");
+            getUI().ifPresent(ui -> new Thread(() -> {
+                String result;
+                try {
+                    result = ensureSsh().executeCommand(remote);
+                } catch (Exception e) {
+                    log.warn("在 {} 下执行命令失败：{}", currentPath, e.getMessage());
+                    result = "[执行失败] " + e.getMessage();
+                }
+                String finalResult = result == null || result.isBlank() ? "(命令无输出)" : result;
+                ui.access(() -> {
+                    runBtn.setEnabled(true);
+                    outputArea.setValue(finalResult);
+                });
+            }, "file-exec").start());
+        });
+
+        VerticalLayout content = new VerticalLayout(cmdField, hint, new Span("输出："), outputArea);
+        content.setPadding(false);
+        content.setSpacing(false);
+        content.getStyle().set("gap", "10px");
+        dialog.add(content);
+        dialog.getFooter().add(runBtn, Dialogs.cancelButton(dialog::close));
+        dialog.open();
+        cmdField.focus();
+    }
+
+    // ------------------------------------------------------------------
+    // 批量删除（表格左侧勾选 + 批量删除按钮）
+    // ------------------------------------------------------------------
+
+    private void confirmBatchDelete() {
+        if (!hasPermission(Constants.DELETE)) {
+            Dialogs.warn("权限不足，无法删除");
+            return;
+        }
+        Set<FileRow> selected = grid.getSelectedItems();
+        if (selected.isEmpty()) {
+            Dialogs.warn("请先在表格左侧勾选要删除的文件或目录");
+            return;
+        }
+        long dirCount = selected.stream().filter(FileRow::dir).count();
+        Dialogs.confirmDanger("批量删除",
+                "确认删除选中的 " + selected.size() + " 项"
+                        + (dirCount > 0 ? "（其中 " + dirCount + " 个目录将连同全部内容一起删除）" : "")
+                        + "吗？此操作不可恢复。",
+                "确认删除", () -> {
+                    List<FileRow> targets = new ArrayList<>(selected);
+                    runSftp("批量删除", () -> {
+                        for (FileRow row : targets) {
+                            if (row.dir()) {
+                                // SFTP 没有递归删除；目录树交给 rm -rf，路径加单引号防空格拆词
+                                ensureSsh().executeCommand(
+                                        "rm -rf '" + row.path().replace("'", "'\\''") + "'");
+                            } else {
+                                ensureSsh().getSftpClient().rm(row.path());
+                            }
+                        }
+                    });
+                    grid.deselectAll();
+                });
+    }
+
     @Override
     protected void onDetach(DetachEvent detachEvent) {
-        if (ssh != null) {
-            ssh.closeConnection();
-            ssh = null;
-        }
+        // 连接已交给共享连接池（SshConnectionPool）管理，页面关闭不断开，
+        // 其它页面可继续复用，空闲 10 分钟后由池自动回收
         super.onDetach(detachEvent);
     }
 

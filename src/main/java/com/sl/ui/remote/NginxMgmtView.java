@@ -9,6 +9,7 @@ import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
 import com.sl.util.Constants;
 import com.sl.util.SSHClientUtil;
+import com.sl.util.SshConnectionPool;
 import com.sl.util.Util;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.Component;
@@ -81,6 +82,7 @@ public class NginxMgmtView extends ViewBase {
     /** 候选主机；预置主机不在里面时要补进去 */
     private List<ConnectionInfo> candidateHosts = new ArrayList<>();
 
+    /** 共享连接池里的 SSH 连接（按 主机:端口:用户 复用，页面关闭不断开，空闲 10 分钟由池回收） */
     private transient SSHClientUtil ssh;
 
     // ---- 管理区（连接成功后可见） ----
@@ -109,7 +111,7 @@ public class NginxMgmtView extends ViewBase {
 
         add(title("nginx管理"));
         add(subtitle("SSH 到目标服务器管理 nginx：启动/停止/重载配置/配置检测，以及在线编辑配置文件。"
-                + "保存配置前会自动在远端备份一份。页面关闭时 SSH 通道自动断开。"));
+                + "保存配置前会自动在远端备份一份。SSH 连接全局共享复用，空闲 10 分钟自动断开。"));
 
         add(buildConnectRow());
         envLabel.addClassName("docker-env-label");
@@ -268,7 +270,8 @@ public class NginxMgmtView extends ViewBase {
         envLabel.setText("");
 
         runAsync("连接 " + info.getIdHost(), () -> {
-            SSHClientUtil client = SSHClientUtil.connect(info);
+            // 走共享连接池：同机的其它页面（文件管理、监控等）复用同一条连接
+            SSHClientUtil client = SshConnectionPool.acquire(info);
             // 探测顺序：填了 nginx 目录就先按 <dir>/sbin/nginx 找，找不到再回落默认探测
             String bin = null;
             String confPath = "";
@@ -667,10 +670,9 @@ public class NginxMgmtView extends ViewBase {
     }
 
     private void closeSsh() {
-        if (ssh != null) {
-            ssh.closeConnection();
-            ssh = null;
-        }
+        // 连接归共享连接池（SshConnectionPool）管：这里只解除本页引用，
+        // 不真正断开——其它页面还能复用，空闲超 10 分钟由池自动回收
+        ssh = null;
     }
 
     private static boolean hasPermission(String code) {

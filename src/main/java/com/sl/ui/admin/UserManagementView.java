@@ -794,6 +794,8 @@ public class UserManagementView extends ViewBase {
                 fillForm();
             } else {
                 permissionBoxField.select(Constants.QUERY);
+                // 新建账号默认给一个月有效期：从当前时间起 +1 个月，按天粒度落到 DatePicker
+                expireField.setValue(LocalDate.now().plusMonths(1));
             }
             userIdField.setEnabled(editing == null);
         }

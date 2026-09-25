@@ -6,6 +6,7 @@ import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.ViewBase;
 import com.sl.util.Constants;
 import com.sl.util.SSHClientUtil;
+import com.sl.util.SshConnectionPool;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.charts.Chart;
@@ -68,7 +69,6 @@ public class RemoteMonitorView extends ViewBase {
     private static final long REFRESH_INTERVAL_MS = 5000;
 
     private transient ConnectionInfo presetHost;
-    private transient SSHClientUtil ssh;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
 
@@ -119,14 +119,8 @@ public class RemoteMonitorView extends ViewBase {
     @Override
     protected void onDetach(DetachEvent detachEvent) {
         running.set(false);
-        if (ssh != null) {
-            try {
-                ssh.closeConnection();
-            } catch (Exception e) {
-                log.debug("关闭监控 SSH 连接失败：{}", e.getMessage());
-            }
-            ssh = null;
-        }
+        // SSH 连接已交给共享连接池（SshConnectionPool）管理，页面关闭不断开，
+        // 空闲 10 分钟后由池自动回收
         super.onDetach(detachEvent);
     }
 
@@ -202,11 +196,9 @@ public class RemoteMonitorView extends ViewBase {
         refreshLabel.setText("最近刷新：" + new java.util.Date());
     }
 
+    /** 取共享池里的连接（懒建、复用，最后使用 10 分钟后池自动断开）。 */
     private synchronized SSHClientUtil ensureSsh() throws IOException {
-        if (ssh == null) {
-            ssh = SSHClientUtil.connect(presetHost);
-        }
-        return ssh;
+        return SshConnectionPool.acquire(presetHost);
     }
 
     // ------------------------------------------------------------------

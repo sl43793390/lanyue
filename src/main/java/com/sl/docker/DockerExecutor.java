@@ -4,6 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import com.sl.docker.model.DockerDaemonStatus;
 import com.sl.entity.ConnectionInfo;
 import com.sl.util.SSHClientUtil;
+import com.sl.util.SshConnectionPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -123,7 +124,9 @@ public class DockerExecutor implements Closeable {
             throw new IOException("连接信息为空");
         }
         this.info = info;
-        this.ssh = SSHClientUtil.connect(info);
+        // 走共享连接池：Docker 管理 / Compose 管理 / 容器终端之外的命令操作共用一条连接，
+        // 标签关闭不断开，空闲 10 分钟后由池统一回收
+        this.ssh = SshConnectionPool.acquire(info);
         this.configuredPrefix = StrUtil.trimToEmpty(commandPrefix);
         this.commandPrefix = resolveCommandPrefix(this.configuredPrefix);
     }
@@ -612,11 +615,8 @@ public class DockerExecutor implements Closeable {
     public void close() {
         closed = true;
         daemonStatus = null;
-        try {
-            ssh.closeConnection();
-        } catch (Exception e) {
-            log.warn("关闭 docker 连接 {} 失败：{}", hostLabel(), e.getMessage());
-        }
+        // 不再直接关 SSH：连接归共享连接池管（SshConnectionPool），关闭标签后
+        // 其它页面还能复用，空闲超 10 分钟由池自动回收
     }
 
     /* ------------------------------------------------------------------ */

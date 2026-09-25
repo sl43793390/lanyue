@@ -234,6 +234,15 @@ public class SSHClientUtil {
         }
     }
 
+    /**
+     * 连接是否可用：SSHClient 已连接且已完成认证。
+     * 共享连接池（{@link SshConnectionPool}）在出借前用它探测，
+     * 死连接（网络断开、服务端空闲掐掉）会被丢弃重建。
+     */
+    public boolean isConnected() {
+        return sshClient != null && sshClient.isConnected() && sshClient.isAuthenticated();
+    }
+
     // 关闭SSH连接
     public void closeConnection() {
         if (sftpClient != null) {
@@ -413,7 +422,11 @@ public class SSHClientUtil {
         return getSftpClient().ls(remoteDirectory); // 列出远程目录文件
     }
 
-    public SFTPClient getSftpClient() throws IOException {
+    /**
+     * 共享的 SFTP 客户端。加了 synchronized：连接进共享池后可能被多个页面
+     * 的后台线程同时取用，至少保证「创建 + 取用」不互相踩。
+     */
+    public synchronized SFTPClient getSftpClient() throws IOException {
         if (null == sftpClient) {
             if (null == sshClient) {
                 throw new IOException("SSH 连接未建立，无法创建 SFTP 通道");

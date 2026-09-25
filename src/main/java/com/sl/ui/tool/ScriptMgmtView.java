@@ -11,6 +11,7 @@ import com.sl.util.Constants;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.contextmenu.ContextMenu;
+import com.vaadin.flow.component.contextmenu.MenuItem;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Span;
@@ -137,7 +138,7 @@ public class ScriptMgmtView extends ViewBase {
         body.addClickListener(e -> openViewDialog(script));
         body.setTitle("点击查看脚本详情");
 
-        // 右下角三个点 + 弹出菜单（复制 / 删除 / 打开）
+        // 右下角三个点 + 弹出菜单（基于此脚本创建 / 复制内容 / 打开 / 删除）
         Button dots = UiFactory.small("⋯", () -> {
             // 菜单由 ContextMenu 的 setOpenOnClick 触发，按钮本身不用做事
         });
@@ -145,15 +146,18 @@ public class ScriptMgmtView extends ViewBase {
         ContextMenu menu = new ContextMenu();
         menu.setTarget(dots);
         menu.setOpenOnClick(true);
-        menu.addItem("复制", e -> {
+        menu.addItem("基于此脚本创建", e -> {
             if (!hasPermission(Constants.ADD)) {
-                Dialogs.warn("权限不足，无法复制脚本");
+                Dialogs.warn("权限不足，无法创建脚本");
                 return;
             }
             new ScriptEditDialog(script).open();
         });
-        menu.addItem("删除", e -> confirmDelete(script));
+        menu.addItem("复制内容", e -> copyContentToClipboard(script));
         menu.addItem("打开", e -> openViewDialog(script));
+        MenuItem deleteItem = menu.addItem("删除", e -> confirmDelete(script));
+        // 删除是危险操作，菜单项标红（只染文字，悬浮态由主题的背景反白兜底）
+        deleteItem.getStyle().set("color", "var(--lumo-error-text-color)");
 
         HorizontalLayout footer = new HorizontalLayout(spacer(), dots);
         footer.setSpacing(false);
@@ -223,29 +227,37 @@ public class ScriptMgmtView extends ViewBase {
         dialog.add(form);
 
         Button copyBtn = UiFactory.button("复制内容", () -> {
-            String value = StrUtil.nullToEmpty(script.getScriptContent());
-            dialog.getElement().executeJs("""
-                    const value = $0;
-                    const fallbackCopy = (v) => {
-                        const ta = document.createElement('textarea');
-                        ta.value = v;
-                        ta.style.position = 'fixed';
-                        ta.style.top = '-1000px';
-                        document.body.appendChild(ta);
-                        ta.select();
-                        try { document.execCommand('copy'); } catch (e) {}
-                        document.body.removeChild(ta);
-                    };
-                    if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
-                        navigator.clipboard.writeText(value).catch(() => fallbackCopy(value));
-                    } else {
-                        fallbackCopy(value);
-                    }
-                    """, value);
+            copyContentToClipboard(script);
             Dialogs.success("已复制脚本内容。若浏览器拦截了剪贴板访问，请手动选中复制");
         });
         dialog.getFooter().add(copyBtn, Dialogs.cancelButton(dialog::close));
         dialog.open();
+    }
+
+    /**
+     * 把脚本内容写进系统剪贴板。
+     * 非安全上下文（http 内网地址）下 navigator.clipboard 不存在，退回 execCommand 兜底。
+     */
+    private void copyContentToClipboard(ScriptInfoEntity script) {
+        String value = StrUtil.nullToEmpty(script.getScriptContent());
+        getElement().executeJs("""
+                const value = $0;
+                const fallbackCopy = (v) => {
+                    const ta = document.createElement('textarea');
+                    ta.value = v;
+                    ta.style.position = 'fixed';
+                    ta.style.top = '-1000px';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    try { document.execCommand('copy'); } catch (e) {}
+                    document.body.removeChild(ta);
+                };
+                if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(value).catch(() => fallbackCopy(value));
+                } else {
+                    fallbackCopy(value);
+                }
+                """, value);
     }
 
     // ------------------------------------------------------------------

@@ -800,6 +800,27 @@ vaadin-text-area[has-label]::part(label) {
     background-color: rgba(37, 99, 235, 0.06);
 }
 
+/* 行内操作按钮悬浮变色：默认浅色底，悬停加深为浅蓝底 + 蓝字，
+   危险（error）按钮悬停保持红色系，让「删除」不会突然变蓝 */
+.server-machine-row .row-actions vaadin-button {
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.server-machine-row .row-actions vaadin-button:hover {
+    background-color: rgba(37, 99, 235, 0.16);
+    color: #1d4ed8;
+}
+
+.server-machine-row .row-actions vaadin-button[theme~="error"]:hover {
+    background-color: var(--lumo-error-color-20pct);
+    color: var(--lumo-error-text-color);
+}
+
+.server-machine-row .row-actions vaadin-button[theme~="success"]:hover {
+    background-color: var(--lumo-success-color-20pct);
+    color: var(--lumo-success-text-color);
+}
+
 /* 主机名加粗突出；端口 / 用户是弱化的元信息 */
 .server-machine-host {
     font-weight: 600;
