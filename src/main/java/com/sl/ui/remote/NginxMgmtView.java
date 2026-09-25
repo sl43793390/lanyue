@@ -51,9 +51,10 @@ import java.util.Set;
  *       再经 SFTP 写回，保存完询问是否立即 reload。</li>
  * </ul>
  * <p>
- * nginx 二进制探测顺序：连接区填了「nginx目录」（包含 sbin/conf 的那个目录）就先按
- * {@code <dir>/sbin/nginx} 与 {@code <dir>/conf/nginx.conf} 取；没填（或没找到）再回落
- * PATH → /usr/local/nginx/sbin → /usr/local/openresty/nginx/sbin，
+ * nginx 二进制探测顺序：<b>连接区填了「nginx目录」（包含 sbin/conf 的那个目录）就只按
+ * {@code <dir>/sbin/nginx} 与 {@code <dir>/conf/nginx.conf} 取</b>——有就是成功，
+ * 没有即检测失败，不回落默认位置；没填才走
+ * PATH → /usr/local/nginx/sbin → /usr/local/openresty/nginx/sbin 的默认探测，
  * 都没有时给出「未安装」提示并禁用全部操作按钮，不发无效命令。
  * 连接区照搬容器和镜像管理的模式：下拉选机器（connection_info + remoteServerList.conf），
  * 服务器列表跳转进来时自动连接一次。
@@ -110,8 +111,7 @@ public class NginxMgmtView extends ViewBase {
         this.connectionInfoMapper = connectionInfoMapper;
 
         add(title("nginx管理"));
-        add(subtitle("SSH 到目标服务器管理 nginx：启动/停止/重载配置/配置检测，以及在线编辑配置文件。"
-                + "保存配置前会自动在远端备份一份。SSH 连接全局共享复用，空闲 10 分钟自动断开。"));
+        add(subtitle("SSH 到目标服务器管理 nginx：启动/停止/重载配置/配置检测，以及在线编辑配置文件。"));
 
         add(buildConnectRow());
         envLabel.addClassName("docker-env-label");
@@ -272,7 +272,9 @@ public class NginxMgmtView extends ViewBase {
         runAsync("连接 " + info.getIdHost(), () -> {
             // 走共享连接池：同机的其它页面（文件管理、监控等）复用同一条连接
             SSHClientUtil client = SshConnectionPool.acquire(info);
-            // 探测顺序：填了 nginx 目录就先按 <dir>/sbin/nginx 找，找不到再回落默认探测
+            // 探测顺序：填了 nginx 目录就只按 <dir>/sbin/nginx 找（找不到即检测失败，
+            // 不再回落默认探测——用户填了目录就说明他知道 nginx 装在哪，
+            // 回落到 PATH 反而可能摸到另一台非预期安装的 nginx）；没填才走默认探测
             String bin = null;
             String confPath = "";
             boolean homeHit = false;
@@ -282,8 +284,7 @@ public class NginxMgmtView extends ViewBase {
                 if (homeHit) {
                     confPath = probeFileAt(client, home + "/conf/nginx.conf");
                 }
-            }
-            if (bin == null) {
+            } else {
                 bin = detectNginxBin(client);
             }
             String version = bin == null ? "" : execQuiet(client, quote(bin) + " -v 2>&1");
@@ -317,8 +318,8 @@ public class NginxMgmtView extends ViewBase {
         if (nginxBin == null) {
             manageArea.setVisible(false);
             String tried = home != null
-                    ? "已尝试指定目录 " + home + "/sbin/nginx，以及 PATH、/usr/local/nginx/sbin、/usr/local/openresty/nginx/sbin"
-                    : "已尝试 PATH、/usr/local/nginx/sbin、/usr/local/openresty/nginx/sbin";
+                    ? "已按指定目录检测 " + home + "/sbin/nginx，未找到（填了目录就不回落 PATH 等默认位置）"
+                    : "已尝试 PATH、/usr/local/nginx/sbin、/usr/local/openresty/nginx/sbin、/usr/sbin/nginx";
             envLabel.setText("已连接 " + host + "，但没有检测到 nginx（" + tried + "）。");
             Dialogs.warn("目标机没有检测到 nginx，无法管理");
             return;
@@ -327,8 +328,7 @@ public class NginxMgmtView extends ViewBase {
         confPathField.setValue(StrUtil.blankToDefault(confPath, "/etc/nginx/nginx.conf"));
         refreshRunningLabel(isRunning);
         String homeNote = home == null ? ""
-                : homeHit ? "　（按指定目录 " + home + " 探测）"
-                : "　（指定目录下未找到，已回落默认探测）";
+                : homeHit ? "　（按指定目录 " + home + " 探测）" : "";
         envLabel.setText("已连接 " + host + "　nginx：" + quote(nginxBin)
                 + "　" + StrUtil.trimToEmpty(version).replaceAll("\\s+", " ") + homeNote);
         appendOutput("已连接 " + host + "，nginx 就绪。");
@@ -356,10 +356,11 @@ public class NginxMgmtView extends ViewBase {
         confPathField.setWidth("420px");
         HorizontalLayout confRow = new HorizontalLayout(
                 UiFactory.fieldRow("配置文件", "80px", confPathField), loadConfBtn, saveConfBtn);
-        confRow.setSpacing(false);
+        confRow.setSpacing(true);
         confRow.setAlignItems(FlexComponent.Alignment.CENTER);
 
-        configArea.setHeight("300px");
+        configArea.setHeight("500px");
+        configArea.setWidth("99%");
         configArea.getStyle().set("--lumo-font-family", "Consolas, 'Courier New', monospace");
         configArea.setVisible(false);
 

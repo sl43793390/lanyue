@@ -289,6 +289,56 @@ public class SSHClientUtil {
     }
 
     /**
+     * 执行单条命令，并把 <b>stdout 与 stderr 合并</b>后返回。
+     * <p>
+     * {@link #executeCommand(String)} 只读 stdout——「command not found」、权限不足
+     * 这类报错全走 stderr，调用方只能看到空输出，误以为命令「执行成功但没结果」。
+     * 本方法开一个后台线程同时排空 stderr，两条流都不堵管道缓冲区，不会死锁；
+     * stdout 读完后把 stderr 追加在输出尾部。
+     * <p>
+     * 等待上限放宽到 60 秒（{@link #executeCommand(String)} 是 5 秒）：
+     * 调用方是文件管理页的「执行命令」弹窗，用户敲的多是 ls/tail/du 这类
+     * 秒级命令，但 5 秒会把「sleep 10 && echo done」拦腰截断成无输出。
+     * 仍在跑的命令超时后随会话关闭一起终止，输出为已产出的部分。
+     */
+    public String executeCommandMerged(String command) throws IOException {
+        if (null == sshClient) {
+            throw new IOException("SSH 连接未建立，无法执行命令：" + command);
+        }
+        try (Session startSession = sshClient.startSession()) {
+            try (Session.Command cmd = startSession.exec(command)) {
+                // stderr 必须与 stdout 并发排空：若命令往 stderr 写满管道缓冲区
+                // （约 64KB）而主线程还在等 stdout，远端进程会卡在 write 上，
+                // stdout 永远不 EOF，readFully 就死锁了
+                StringBuilder errBuf = new StringBuilder();
+                Thread errDrainer = new Thread(() -> {
+                    try {
+                        byte[] err = cmd.getErrorStream().readAllBytes();
+                        errBuf.append(new String(err));
+                    } catch (Exception ignore) {
+                        // 命令结束、通道关闭时读流抛错，属正常收尾
+                    }
+                }, "ssh-stderr-drain");
+                errDrainer.setDaemon(true);
+                errDrainer.start();
+
+                String out = IOUtils.readFully(cmd.getInputStream()).toString();
+                cmd.join(60, TimeUnit.SECONDS); // 等待命令执行完成
+                try {
+                    errDrainer.join(2000);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                if (errBuf.length() == 0) {
+                    return out;
+                }
+                return out.isEmpty() ? errBuf.toString()
+                        : out.endsWith("\n") ? out + errBuf : out + "\n" + errBuf;
+            }
+        }
+    }
+
+    /**
      * 打开一个命令通道并把输出作为流返回，用于「边产出边消费」的长输出命令
      * （例如 {@code docker logs --tail 5000}、{@code cat 大日志}）。
      * <p>

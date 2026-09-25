@@ -690,7 +690,7 @@ vaadin-text-area[has-label]::part(label) {
    见 UiFactory.rowAction 注释）；删除按钮走 error 主题给红底红字。
    ============================================================ */
 .row-actions {
-    gap: 8px;
+    gap: 20px;
     align-items: center;
 }
 

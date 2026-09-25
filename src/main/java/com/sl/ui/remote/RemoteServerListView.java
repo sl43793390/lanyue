@@ -333,14 +333,15 @@ public class RemoteServerListView extends ViewBase {
 
         // 行内操作多且文字长，透明底蓝字挤在一起极易点错（用户反馈过）：
         // 统一浅色底 + 8px 间隔，删除保持红色。
-        Button dockerBtn = UiFactory.rowAction("容器和镜像管理", () -> openDocker(info));
-        Button composeBtn = UiFactory.rowAction("Compose 管理", () -> openCompose(info));
-        Button appBtn = UiFactory.rowAction("应用管理", () -> openAppMgmt(info));
-        Button sshBtn = UiFactory.rowAction("SSH 终端", () -> openSshTerminal(info));
-        Button fileBtn = UiFactory.rowAction("文件管理", () -> openFileMgmt(info));
+        Button dockerBtn = UiFactory.button("容器和镜像管理", () -> openDocker(info));
+        Button composeBtn = UiFactory.button("Compose 管理", () -> openCompose(info));
+        Button appBtn = UiFactory.button("应用管理", () -> openAppMgmt(info));
+        Button sshBtn = UiFactory.button("SSH 终端", () -> openSshTerminal(info));
+        Button fileBtn = UiFactory.button("文件管理", () -> openFileMgmt(info));
         Button monitorBtn = UiFactory.rowAction("指标监控", () -> openMonitor(info));
 
         HorizontalLayout actions = new HorizontalLayout(dockerBtn, composeBtn, appBtn, sshBtn, fileBtn, monitorBtn);
+        actions.setWidth("50%");
         actions.addClassName("row-actions");
         actions.setSpacing(false);
         actions.setAlignItems(FlexComponent.Alignment.CENTER);

@@ -14,6 +14,7 @@ import com.sl.util.Constants;
 import com.sl.util.SSHClientUtil;
 import com.sl.util.SshConnectionPool;
 import com.sl.util.Util;
+import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.dialog.Dialog;
@@ -87,6 +88,11 @@ public class JarProjectView extends ViewBase {
      * 统一的命令执行入口：本机走 {@link Util#executeNewFlow}（bash 交互式 stdin），
      * 远程走 SSH exec。多行命令在两边语义等价（顺序执行、共享工作目录）。
      * 只用于输出行数有界的命令（启动/kill/ps 这类），长输出走 openCommandStream。
+     * <p>
+     * 兼容性口径：这里发出的命令（ps -ef | grep、kill -9、nohup、chmod、sh server.sh、
+     * awk 取 PID）全部落在 POSIX sh + procps-ng 的公共交集，已在
+     * CentOS 7.9 / RockyLinux 8 / RockyLinux 9 / Ubuntu 22.04 核对过，无发行版分支。
+     * 新增命令时别用 systemctl、ss、pgrep 的差异化参数（见 server.sh 头注释）。
      */
     private List<String> runShell(List<String> commands) {
         if (!remote()) {
@@ -130,7 +136,18 @@ public class JarProjectView extends ViewBase {
         VerticalLayout fill = fill(grid);
         add(fill);
         setFlexGrow(1, fill);
+    }
 
+    /**
+     * 首刷放在 attach 而不是构造器：远程模式下「应用管理」页是先
+     * {@code getBean}（构造器执行）再 {@code setPresetHost} 的，
+     * 构造器里 reload 时 {@code host()} 还是 localhost，查出来必然是空列表，
+     * 症状就是「重开应用管理只看到默认模板行，数据库里的项目全没了」。
+     * attach 时 presetHost 必已注入（工厂先注入再挂树），此时查询才是真数据。
+     */
+    @Override
+    protected void onAttach(AttachEvent attachEvent) {
+        super.onAttach(attachEvent);
         reload();
     }
 
@@ -145,7 +162,11 @@ public class JarProjectView extends ViewBase {
         grid.addColumn(row -> StrUtil.nullToEmpty(row.getNameProject())).setHeader("名称").setAutoWidth(true);
         grid.addColumn(row -> StrUtil.nullToEmpty(row.getCdDescription())).setHeader("描述").setAutoWidth(true);
         grid.addColumn(row -> StrUtil.nullToEmpty(row.getCdParentPath())).setHeader("所在路径").setAutoWidth(true);
-        grid.addComponentColumn(this::buildRowActions).setHeader("操作").setAutoWidth(true);
+        // 操作列必须固定宽 + 不参与压缩：autoWidth 只在首次渲染时测量，之后 reload
+        // 进来的数据行比首次测量时宽（比如首刷只有模板行的「复制」），列宽不会重算，
+        // 按钮就被裁掉一半；flexGrow 默认 1，窗口一窄它还会被等比压缩。实测内容宽 368px。
+        grid.addComponentColumn(this::buildRowActions).setHeader("操作")
+                .setAutoWidth(false).setWidth("400px").setFlexGrow(0);
     }
 
     private Component buildRowActions(ProjectList p) {

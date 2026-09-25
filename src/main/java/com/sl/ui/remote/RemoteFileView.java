@@ -5,6 +5,7 @@ import com.sl.config.PureTextProperties;
 import com.sl.entity.ConnectionInfo;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.LoadingOverlay;
+import com.sl.ui.component.TabHost;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
 import com.sl.util.CharsetDetector;
@@ -96,6 +97,9 @@ public class RemoteFileView extends ViewBase {
     /** 纯文本编辑白名单（application.properties: pure.text.type / pure.text.type.maxsize） */
     private final transient PureTextProperties pureText;
 
+    /** 开 SSH 终端标签要用：从容器里取 SshTerminalView 原型 bean */
+    private final transient org.springframework.context.ApplicationContext applicationContext;
+
     private final TextField pathField = new TextField();
     private final Span statusLabel = new Span();
     private final Grid<FileRow> grid = UiFactory.grid(FileRow.class);
@@ -111,8 +115,10 @@ public class RemoteFileView extends ViewBase {
     }
 
     public RemoteFileView(PureTextProperties pureTextProperties,
+                          org.springframework.context.ApplicationContext applicationContext,
                           @Value("${spring.servlet.multipart.max-file-size:100MB}") DataSize maxUploadSize) {
         this.pureText = pureTextProperties;
+        this.applicationContext = applicationContext;
         this.maxUploadSize = maxUploadSize;
     }
 
@@ -149,10 +155,11 @@ public class RemoteFileView extends ViewBase {
         showHiddenFiles.setTooltipText("勾选后显示以 . 开头的隐藏文件");
         showHiddenFiles.addValueChangeListener(e -> navigate(currentPath));
         Button execBtn = UiFactory.button("执行命令", this::openExecDialog);
+        Button sshTerminalBtn = UiFactory.button("跳转到SSH终端", this::openSshTerminal);
         Button batchDeleteBtn = UiFactory.danger("批量删除", this::confirmBatchDelete);
 
         HorizontalLayout bar = toolbar(pathField, goBtn, upBtn, mkdirBtn, reloadBtn, showHiddenFiles,
-                execBtn, spacer(), batchDeleteBtn, statusLabel);
+                execBtn, sshTerminalBtn, spacer(), batchDeleteBtn, statusLabel);
         add(bar);
 
         buildGrid();
@@ -652,7 +659,8 @@ public class RemoteFileView extends ViewBase {
         dialog.setHeight("750px");
 
         TextField cmdField = UiFactory.textField("命令", "如：ls -l、du -sh *、tail -n 100 xxx.log", "640px");
-        Span hint = new Span("命令将在当前显示的目录 " + currentPath + " 下执行（内部以 cd 进入该目录再执行）。");
+        Span hint = new Span("命令将在当前显示的目录 " + currentPath + " 下执行（内部以 cd 进入该目录再执行）。"
+                + "输入完按回车即执行，命令报错信息（stderr）也会显示在输出里，执行完自动刷新目录。");
         hint.addClassName("view-subtitle");
 
         TextArea outputArea = UiFactory.textArea();
@@ -663,31 +671,10 @@ public class RemoteFileView extends ViewBase {
 
         Button runBtn = new Button("执行");
         runBtn.addThemeVariants(com.vaadin.flow.component.button.ButtonVariant.LUMO_PRIMARY);
-        runBtn.addClickListener(event -> {
-            String cmd = StrUtil.trimToNull(cmdField.getValue());
-            if (cmd == null) {
-                Dialogs.warn("请输入要执行的命令");
-                return;
-            }
-            // cd 进当前目录再执行；目录名带单引号等特殊字符也要安全拼接
-            String remote = "cd '" + currentPath.replace("'", "'\\''") + "' && " + cmd;
-            runBtn.setEnabled(false);
-            outputArea.setValue("正在执行……");
-            getUI().ifPresent(ui -> new Thread(() -> {
-                String result;
-                try {
-                    result = ensureSsh().executeCommand(remote);
-                } catch (Exception e) {
-                    log.warn("在 {} 下执行命令失败：{}", currentPath, e.getMessage());
-                    result = "[执行失败] " + e.getMessage();
-                }
-                String finalResult = result == null || result.isBlank() ? "(命令无输出)" : result;
-                ui.access(() -> {
-                    runBtn.setEnabled(true);
-                    outputArea.setValue(finalResult);
-                });
-            }, "file-exec").start());
-        });
+        Runnable runAction = () -> runExecCommand(cmdField, outputArea, runBtn);
+        runBtn.addClickListener(event -> runAction.run());
+        // 回车直接执行，不用再去找「执行」按钮
+        cmdField.addKeyDownListener(com.vaadin.flow.component.Key.ENTER, event -> runAction.run());
 
         VerticalLayout content = new VerticalLayout(cmdField, hint, new Span("输出："), outputArea);
         content.setPadding(false);
@@ -697,6 +684,53 @@ public class RemoteFileView extends ViewBase {
         dialog.getFooter().add(runBtn, Dialogs.cancelButton(dialog::close));
         dialog.open();
         cmdField.focus();
+    }
+
+    /** 执行弹窗里的命令：合并 stderr（报错信息必须看得见），跑完刷新目录数据。 */
+    private void runExecCommand(TextField cmdField, TextArea outputArea, Button runBtn) {
+        String cmd = StrUtil.trimToNull(cmdField.getValue());
+        if (cmd == null) {
+            Dialogs.warn("请输入要执行的命令");
+            return;
+        }
+        // cd 进当前目录再执行；目录名带单引号等特殊字符也要安全拼接
+        String remote = "cd '" + currentPath.replace("'", "'\\''") + "' && " + cmd;
+        runBtn.setEnabled(false);
+        outputArea.setValue("正在执行……");
+        getUI().ifPresent(ui -> new Thread(() -> {
+            String result;
+            try {
+                // executeCommand 只收 stdout，命令不存在时 stderr 上的
+                // 「command not found」会被丢掉，界面就误显示「无输出」；
+                // 这里用合流版本，报错信息原样进输出区
+                result = ensureSsh().executeCommandMerged(remote);
+            } catch (Exception e) {
+                log.warn("在 {} 下执行命令失败：{}", currentPath, e.getMessage());
+                result = "[执行失败] " + e.getMessage();
+            }
+            String finalResult = result == null || result.isBlank() ? "(命令无输出)" : result;
+            ui.access(() -> {
+                runBtn.setEnabled(true);
+                outputArea.setValue(finalResult);
+                // 命令可能增删改了目录内容（mkdir/touch/rm…），执行完刷新一次
+                navigate(currentPath);
+            });
+        }, "file-exec").start());
+    }
+
+    /** 从文件管理页一键开本机的 SSH 终端标签（与服务器列表行内按钮同一打开路径）。 */
+    private void openSshTerminal() {
+        TabHost host = TabHost.current();
+        if (host == null) {
+            Dialogs.warn("当前页面不在主框架内，无法打开终端");
+            return;
+        }
+        // Supplier：同名标签已存在时切回旧的，不会重复登记 token
+        host.open("SSH终端-" + presetHost.getIdHost(), () -> {
+            SshTerminalView view = applicationContext.getBean(SshTerminalView.class);
+            view.setPresetHost(presetHost);
+            return view;
+        });
     }
 
     // ------------------------------------------------------------------

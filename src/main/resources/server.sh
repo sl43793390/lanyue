@@ -1,6 +1,15 @@
 #!/bin/sh
 # 用法：sh server.sh {start|stop|restart|status} <jar包名>
 # 示例：sh server.sh start logviewer.jar
+#
+# 兼容性口径（2026-09 与卧龙确认）：本脚本与 jar/Tomcat/通用项目管理发出的全部命令
+# 只用 POSIX sh + coreutils + procps-ng 的公共交集，已核对
+# CentOS 7.9 / RockyLinux 8 / RockyLinux 9 / Ubuntu 22.04 四个发行版无需分支：
+#   - ps -C java -f --width 1000：procps-ng 全系支持（CentOS7=3.3.10，Rocky8/9、Ubuntu22 均可）
+#   - ps -ef | grep / awk / kill -9 / nohup / chmod / head -n / command -v / test -x：
+#     全部为 POSIX 或四版 coreutils 行为一致
+#   - 未用 systemctl / ss / pgrep 参数等发行版差异点
+# 注意：/bin/sh 在 Ubuntu 22 是 dash，本脚本保持 POSIX 语法（不要加 [[ ]] 等bash语法）。
 APP_NAME="$2"
 
 usage() {

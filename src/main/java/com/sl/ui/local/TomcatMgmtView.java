@@ -13,6 +13,7 @@ import com.sl.util.Constants;
 import com.sl.util.SSHClientUtil;
 import com.sl.util.SshConnectionPool;
 import com.sl.util.Util;
+import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.dialog.Dialog;
@@ -118,7 +119,7 @@ public class TomcatMgmtView extends ViewBase {
         add(subtitle(remote()
                 ? "管理 " + host() + " 上的 Tomcat 实例：启停、查状态、修改配置、上传 war 包，命令通过 SSH 远程执行。"
                 : "管理本机 localhost 上的 Tomcat 实例：启停、查状态、修改配置、上传 war 包。"
-                + "Tomcat 主目录下需包含 bin、webapps、conf、lib 等目录。"));
+                + "Tomcat 主目录下需包含 bin、webapps、conf、lib 等目录。如果报找不到JAVA_HOME，在start.sh和shutdown.sh第一行配置：export JAVA_HOME=当前机器的jdk安装目录"));
 
         Button searchBtn = UiFactory.primary("搜索", this::reload);
         Button addBtn = UiFactory.button("添加实例", () -> {
@@ -135,7 +136,18 @@ public class TomcatMgmtView extends ViewBase {
         VerticalLayout fill = fill(grid);
         add(fill);
         setFlexGrow(1, fill);
+    }
 
+    /**
+     * 首刷放在 attach 而不是构造器：远程模式下「应用管理」页是先
+     * {@code getBean}（构造器执行）再 {@code setPresetHost} 的，
+     * 构造器里 reload 时 {@code host()} 还是 localhost，查出来必然是空列表，
+     * 症状就是「重开应用管理只看到默认模板行，数据库里的实例全没了」。
+     * attach 时 presetHost 必已注入（工厂先注入再挂树），此时查询才是真数据。
+     */
+    @Override
+    protected void onAttach(AttachEvent attachEvent) {
+        super.onAttach(attachEvent);
         reload();
     }
 
@@ -150,7 +162,11 @@ public class TomcatMgmtView extends ViewBase {
         grid.addColumn(row -> StrUtil.nullToEmpty(row.getNameTomcat())).setHeader("名称").setAutoWidth(true);
         grid.addColumn(row -> StrUtil.nullToEmpty(row.getCdDescription())).setHeader("描述").setAutoWidth(true);
         grid.addColumn(row -> StrUtil.nullToEmpty(row.getTomcatPath())).setHeader("主目录").setAutoWidth(true);
-        grid.addComponentColumn(this::buildRowActions).setHeader("操作").setAutoWidth(true);
+        // 操作列必须固定宽 + 不参与压缩：autoWidth 只在首次渲染时测量，之后 reload
+        // 进来的数据行比首次测量时宽（比如首刷只有模板行的「复制」），列宽不会重算，
+        // 按钮就被裁掉一半；flexGrow 默认 1，窗口一窄它还会被等比压缩。实测内容宽 368px。
+        grid.addComponentColumn(this::buildRowActions).setHeader("操作")
+                .setAutoWidth(false).setWidth("400px").setFlexGrow(0);
     }
 
     private Component buildRowActions(TomcatInfoEntity t) {
