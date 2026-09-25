@@ -66,7 +66,9 @@ CREATE TABLE IF NOT EXISTS `users` (
 -- 这一段是可重复执行的（INSERT IGNORE），不会把已有账号冲掉。
 -- 内置管理员 admin 另有兜底：DbInitializer 每次启动都会检查它是否存在且可用，
 -- 即便下面这行被 IGNORE 跳过，也不会出现"谁都登不进去"的情况。
--- 表结构必须与 DbInitializer.COLUMNS 保持一致，改一处要改两处。
+-- 表结构必须与 DbInitializer.TABLES 里的表定义保持一致，改一处要改两处。
+-- 业务表不执行本脚本也会由 DbInitializer 自动建出（CREATE TABLE IF NOT EXISTS），
+-- 本脚本的价值在于 DROP 重建 + 演示数据。
 INSERT IGNORE INTO `users`
     (`id_user`, `name_user`, `password`, `create_time`, `email`, `organization`, `cd_phone`, `expire_time`, `user_flag`, `permission`)
 VALUES

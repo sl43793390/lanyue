@@ -329,7 +329,7 @@ public class RemoteServerListView extends ViewBase {
 
         private final TextField hostField = UiFactory.textField("主机", "192.168.1.10 或 host.example.com","500px");
         private final TextField portField = UiFactory.textField("端口","","500px");
-        private final TextField userField = UiFactory.textField("用户名","500px");
+        private final TextField userField = UiFactory.textField("用户名","","500px");
         private final PasswordField passField = UiFactory.passwordField("密码","500px");
         private final TextField descField = UiFactory.textField("备注","","500px");
         private final Checkbox keyCheck = new Checkbox("使用私钥登录（上传后优先用私钥认证）");

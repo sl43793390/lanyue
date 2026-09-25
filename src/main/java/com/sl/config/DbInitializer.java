@@ -43,13 +43,16 @@ import java.util.Locale;
  * <b>SQLite 与 MySQL 8 共用这一份代码</b>：所有方言差异都收敛在 {@link DatabaseDialect}，
  * 这里只按 {@code dialect} 分支，不写任何库名判断。
  *
- * <h2>业务表不在这里创建（但列改名会管）</h2>
+ * <h2>业务表也在这里建，但只建结构不灌数据</h2>
  * 业务表（{@code connection_info} / {@code log_path} / {@code projects} /
- * {@code tomcat_info} / {@code common_project_mgmt}）在 {@code demo.sql} / {@code demo-mysql8.sql}
- * 里，那两个脚本开头是一串 {@code DROP TABLE}，属于"给人手工初始化"的脚本，
+ * {@code tomcat_info} / {@code common_project_mgmt}）的建表语句在这里幂等兜底
+ * （表不存在则 {@code CREATE TABLE IF NOT EXISTS}，缺列则补列），
+ * 保证全新环境（新机器、空的库文件）上不执行任何脚本就能直接启动。
+ * demo 数据（演示账号、示例服务器、示例项目）仍在 {@code demo.sql} / {@code demo-mysql8.sql}
+ * 里——那两个脚本开头是一串 {@code DROP TABLE}，属于"给人手工初始化"的脚本，
  * 不能挂到每次启动的流程上，否则重启一次数据就没了。
  * <p>
- * 但**列改名**是例外，见 {@link #applyCompatMigrations()}：它只改元数据、不碰数据，
+ * 但**列改名**是另一回事，见 {@link #applyCompatMigrations()}：它只改元数据、不碰数据，
  * 而且是幂等的。留着它是因为旧库里的 {@code connection_info.desc} 用的是 MySQL 保留字，
  * 不迁移的话等切到 MySQL 8 那天会直接报语法错，而不是数据错——那种错更难定位。
  */
@@ -61,22 +64,106 @@ public class DbInitializer implements ApplicationRunner {
     private static final String TABLE = "users";
 
     /**
-     * 表结构与 {@code User} 实体的 {@code @TableId} / {@code @TableField} 一一对应，
+     * users 表。表结构与 {@code User} 实体的 {@code @TableId} / {@code @TableField} 一一对应，
      * 增删字段时两边必须同时改，否则 MyBatis-Plus 拼出来的 SQL 会找不到列。
      * <p>
      * 长度是给 MySQL 用的（VARCHAR 必须带长度）。SQLite 不看长度，多写几位没有副作用。
      */
-    private static final Object[][] COLUMNS = {
-            {"id_user", 50},
-            {"name_user", 50},
-            {"password", 100},
-            {"create_time", 32},
-            {"email", 64},
-            {"organization", 64},
-            {"cd_phone", 32},
-            {"expire_time", 32},
-            {"user_flag", 1},
-            {"permission", 255}};
+    private static final TableDef USERS = new TableDef("users",
+            new Object[][] {
+                    {"id_user", 50, true},
+                    {"name_user", 50, false},
+                    {"password", 100, false},
+                    {"create_time", 32, false},
+                    {"email", 64, false},
+                    {"organization", 64, false},
+                    {"cd_phone", 32, false},
+                    {"expire_time", 32, false},
+                    {"user_flag", 1, false},
+                    {"permission", 255, false}},
+            new String[] {"id_user"});
+
+    /**
+     * 启动时逐张兜底的全部表，业务表与 demo.sql / demo-mysql8.sql 逐表逐列对应。
+     * <p>
+     * 改表结构时**三处同步**：这里的定义、demo.sql、demo-mysql8.sql。
+     * 这里只负责"表不存在则建、缺列则补"的兜底，不写任何演示数据；
+     * 与脚本的分工是：脚本（开头有 DROP TABLE）给人手工初始化演示库用，
+     * 这里保证全新环境不执行任何脚本也能直接启动。
+     * <p>
+     * 列定义每行是 {列名, VARCHAR 长度, 是否 NOT NULL}。NOT NULL 只在**建表**那条路径生效
+     * （复合主键的成员列必须 NOT NULL，否则 MySQL 建不出表）；补列路径一律不带 NOT NULL，
+     * 因为 SQLite 的 ADD COLUMN 不接受无默认值的 NOT NULL，MySQL 也会因已有行需要默认值而失败。
+     */
+    private static final TableDef[] TABLES = {
+            USERS,
+            new TableDef("common_project_mgmt",
+                    new Object[][] {
+                            {"id_host", 64, true},
+                            {"id_project", 64, true},
+                            {"name_project", 64, true},
+                            {"cd_path", 255, true},
+                            {"cmd_start", 255, false},
+                            {"cmd_stop", 255, false},
+                            {"cmd_restart", 255, false},
+                            {"cmd_refresh", 255, false},
+                            {"cmd_status", 255, false},
+                            {"cmd_status_success_key", 128, false},
+                            {"cd_description", 255, false},
+                            {"cd_tag", 64, false}},
+                    new String[] {"id_host", "id_project"}),
+            new TableDef("connection_info",
+                    new Object[][] {
+                            {"id_host", 64, true},
+                            {"cd_port", 10, true},
+                            {"id_user", 64, true},
+                            {"cd_password", 255, false},
+                            {"cd_key_path", 255, false},
+                            {"cd_logpath", 255, false},
+                            {"cd_desc", 255, false}},
+                    new String[] {"id_host", "cd_port", "id_user"}),
+            new TableDef("log_path",
+                    new Object[][] {
+                            {"id_loghost", 64, true},
+                            {"id_log_path", 255, true},
+                            {"name_log", 64, false}},
+                    new String[] {"id_loghost", "id_log_path"}),
+            new TableDef("projects",
+                    new Object[][] {
+                            {"id_host", 64, true},
+                            {"id_project", 64, true},
+                            {"name_project", 64, false},
+                            {"cd_parent_path", 255, true},
+                            {"cd_tag", 64, false},
+                            {"cd_command", 255, false},
+                            {"jvm_param", 255, false},
+                            {"jar_param", 128, false},
+                            {"jar_name", 255, false},
+                            {"cd_description", 255, false}},
+                    new String[] {"id_host", "id_project"}),
+            new TableDef("tomcat_info",
+                    new Object[][] {
+                            {"id_host", 64, true},
+                            {"tomcat_id", 50, true},
+                            {"name_tomcat", 64, false},
+                            {"tomcat_path", 255, false},
+                            {"webapp_path", 255, false},
+                            {"tag", 64, false},
+                            {"cd_description", 255, false}},
+                    new String[] {"id_host", "tomcat_id"})};
+
+    /** 一张表的建表定义：表名、列（{列名, 长度, 是否 NOT NULL}）、主键列。 */
+    private static final class TableDef {
+        final String name;
+        final Object[][] columns;
+        final String[] primaryKey;
+
+        TableDef(String name, Object[][] columns, String[] primaryKey) {
+            this.name = name;
+            this.columns = columns;
+            this.primaryKey = primaryKey;
+        }
+    }
 
     /**
      * 历史列名 → 新列名。只放**必须改**的项。
@@ -106,9 +193,9 @@ public class DbInitializer implements ApplicationRunner {
     public void run(ApplicationArguments args) {
         prepareDatabase();
         try {
-            ensureUserTable();
+            ensureTables();
         } catch (Exception e) {
-            log.error("初始化 {} 表失败，管理员账号可能不可用", TABLE, e);
+            log.error("初始化数据库表失败，部分功能可能不可用", e);
         }
         try {
             applyCompatMigrations();
@@ -248,59 +335,76 @@ public class DbInitializer implements ApplicationRunner {
      * ------------------------------------------------------------------ */
 
     /**
-     * 表不存在就建，缺字段就补。
+     * 逐张保证 {@link #TABLES} 里的表存在且字段齐全。
      * <p>
      * 用 {@code SELECT * ... WHERE 1 = 0} 读列名而不是各家的元数据表
      * （SQLite 的 {@code PRAGMA table_info} / MySQL 的 {@code information_schema}）：
      * 前者是标准 SQL，换数据库不用改，且不产生任何数据副作用。
      */
-    private void ensureUserTable() throws SQLException {
+    private void ensureTables() throws SQLException {
         synchronized (DbInitializer.class) {
             DatabaseDialect dialect = databaseInfo.dialect();
             try (Connection conn = dataSource.getConnection()) {
-                List<String> existing = readColumns(conn, TABLE);
-                if (null == existing) {
-                    try (Statement st = conn.createStatement()) {
-                        st.executeUpdate(buildCreateSql(dialect));
-                    }
-                    log.info("已创建 {} 表", TABLE);
-                    return;
-                }
-                List<String> added = new ArrayList<String>();
-                for (Object[] column : COLUMNS) {
-                    String name = (String) column[0];
-                    if (existing.contains(name.toLowerCase(Locale.ROOT))) {
-                        continue;
-                    }
-                    // SQLite 的 ADD COLUMN 不接受 NOT NULL（除非同时给默认值），
-                    // MySQL 接受但会因为已有行需要默认值而失败。补列一律只补类型，
-                    // 主键约束由原表保留 —— 反正只有建表那条路径才需要 NOT NULL。
-                    try (Statement st = conn.createStatement()) {
-                        st.executeUpdate("ALTER TABLE " + dialect.quote(TABLE)
-                                + " ADD COLUMN " + dialect.quote(name)
-                                + " " + dialect.text((Integer) column[1]));
-                    }
-                    added.add(name);
-                }
-                if (!added.isEmpty()) {
-                    log.warn("{} 表缺少字段 {}，已自动补齐", TABLE, added);
+                for (TableDef def : TABLES) {
+                    ensureTable(conn, dialect, def);
                 }
             }
         }
     }
 
-    private String buildCreateSql(DatabaseDialect dialect) {
+    /** 表不存在就建，缺字段就补。见 {@link #ensureTables()}。 */
+    private void ensureTable(Connection conn, DatabaseDialect dialect, TableDef def) throws SQLException {
+        List<String> existing = readColumns(conn, def.name);
+        if (null == existing) {
+            try (Statement st = conn.createStatement()) {
+                st.executeUpdate(buildCreateSql(dialect, def));
+            }
+            log.info("已创建 {} 表", def.name);
+            return;
+        }
+        List<String> added = new ArrayList<String>();
+        for (Object[] column : def.columns) {
+            String name = (String) column[0];
+            if (existing.contains(name.toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            // SQLite 的 ADD COLUMN 不接受 NOT NULL（除非同时给默认值），
+            // MySQL 接受但会因为已有行需要默认值而失败。补列一律只补类型，
+            // 主键约束由原表保留 —— 反正只有建表那条路径才需要 NOT NULL。
+            try (Statement st = conn.createStatement()) {
+                st.executeUpdate("ALTER TABLE " + dialect.quote(def.name)
+                        + " ADD COLUMN " + dialect.quote(name)
+                        + " " + dialect.text((Integer) column[1]));
+            }
+            added.add(name);
+        }
+        if (!added.isEmpty()) {
+            log.warn("{} 表缺少字段 {}，已自动补齐", def.name, added);
+        }
+    }
+
+    private String buildCreateSql(DatabaseDialect dialect, TableDef def) {
         StringBuilder sql = new StringBuilder();
-        sql.append("CREATE TABLE IF NOT EXISTS ").append(dialect.quote(TABLE)).append(" (");
-        for (Object[] column : COLUMNS) {
+        sql.append("CREATE TABLE IF NOT EXISTS ").append(dialect.quote(def.name)).append(" (");
+        for (Object[] column : def.columns) {
             String name = (String) column[0];
             sql.append(dialect.quote(name)).append(" ").append(dialect.text((Integer) column[1]));
-            if ("id_user".equals(name)) {
+            if (Boolean.TRUE.equals(column[2])) {
                 sql.append(" NOT NULL");
             }
             sql.append(", ");
         }
-        sql.append("PRIMARY KEY (").append(dialect.quote("id_user")).append("))");
+        sql.append("PRIMARY KEY (");
+        for (int i = 0; i < def.primaryKey.length; i++) {
+            if (i > 0) {
+                sql.append(", ");
+            }
+            sql.append(dialect.quote(def.primaryKey[i]));
+        }
+        sql.append("))");
+        if (dialect.isMysql()) {
+            sql.append(" ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        }
         return sql.toString();
     }
 

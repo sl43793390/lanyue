@@ -97,8 +97,8 @@ public class HomeView extends VerticalLayout {
         card.add(bullet("生产运行：mvn package -Pproduction 打包后 java -jar 启动；"));
         card.add(bullet("切换 MySQL：加启动参数 --spring.profiles.active=mysql，"
                 + "并按 demo-mysql8.sql 建库；"));
-        card.add(bullet("首次使用：执行 demo.sql 建表（SQLite 默认库文件为运行目录下 demo.db），"
-                + "内置 admin 账号，登录后请尽快修改密码；"));
+        card.add(bullet("首次使用：启动时自动建表（SQLite 默认库文件为运行目录下 demo.db），"
+                + "内置 admin 账号，登录后请尽快修改密码；demo.sql 仅用于灌演示数据；"));
         card.add(bullet("日志输出：运行目录 logs/ 下，排查问题先看 logViewer.log。"));
         return card;
     }

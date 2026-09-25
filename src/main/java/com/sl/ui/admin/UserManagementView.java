@@ -220,7 +220,6 @@ public class UserManagementView extends ViewBase {
         sortBox.addValueChangeListener(e -> refreshView());
 
         Button resetBtn = UiFactory.button("重置筛选", this::resetFilter);
-        Button exportBtn = UiFactory.button("导出 Excel", this::exportExcel);
         Button addBtn = UiFactory.primary("新增用户", () -> {
             if (!hasPermission(Constants.ADD)) {
                 Dialogs.warn("权限不足，无法新增用户");
@@ -234,7 +233,7 @@ public class UserManagementView extends ViewBase {
                 UiFactory.fieldRow("状态", "52px", statusBox),
                 UiFactory.fieldRow("权限", "52px", permissionBox),
                 UiFactory.fieldRow("排序", "52px", sortBox),
-                resetBtn, spacer(), exportBtn, addBtn);
+                resetBtn, spacer(),  addBtn);
         return row;
     }
 
@@ -803,7 +802,7 @@ public class UserManagementView extends ViewBase {
         UserEditDialog(User editing) {
             this.editing = editing;
             setHeaderTitle(editing == null ? "新增用户" : "编辑用户 " + editing.getUserId());
-            setWidth("640px");
+            setWidth("750px");
             setCloseOnOutsideClick(false);
 
             List<String> flagItems = List.of(FLAG_ENABLE_TEXT, FLAG_DISABLE_TEXT);
@@ -1090,86 +1089,6 @@ public class UserManagementView extends ViewBase {
             getFooter().add(cancel, save);
             newPwd.focus();
         }
-    }
-
-    // ==================================================================
-    // Excel 导出
-    // ==================================================================
-
-    /**
-     * 导出当前筛选结果（"看到的这些"而不是全表）。旧版用 FileDownloader + StreamResource
-     * 流式回浏览器，Vaadin 24 移除了 FileDownloader；用户列表很小，直接在请求线程
-     * 生成 xlsx 落临时文件，再给一个 Anchor 下载入口，链路简单可靠。
-     */
-    private void exportExcel() {
-        byte[] bytes = buildUserWorkbook(viewUsers);
-        if (bytes.length == 0) {
-            Dialogs.error("生成 Excel 失败，详见服务端日志");
-            return;
-        }
-        File tmp;
-        try {
-            tmp = File.createTempFile("users-", ".xlsx");
-            Files.write(tmp.toPath(), bytes);
-        } catch (IOException e) {
-            log.error("写出用户列表临时文件失败", e);
-            Dialogs.error("写出临时文件失败：" + e.getMessage());
-            return;
-        }
-        Dialog dialog = new Dialog();
-        dialog.setHeaderTitle("用户列表已导出（" + viewUsers.size() + " 条）");
-        VerticalLayout body = new VerticalLayout(
-                new Span("按当前筛选与排序导出。"), UiFactory.download(tmp, "下载 users.xlsx"));
-        body.setPadding(false);
-        dialog.add(body);
-        dialog.getFooter().add(UiFactory.button("关闭", dialog::close));
-        dialog.open();
-    }
-
-    /**
-     * 把用户列表写成 xlsx 的字节数组。用 POI 直接写而不是 EasyExcel：EasyExcel 2.2.6
-     * 依赖 cglib，而 cglib 在 JDK 17 及以上会因模块访问限制抛 InaccessibleObjectException。
-     * 抽成 static 是为了能脱离 Vaadin 环境单独验证。
-     */
-    static byte[] buildUserWorkbook(List<User> users) {
-        String[] headers = {"用户名", "姓名", "所属组织", "邮箱", "手机号", "权限", "状态", "创建时间", "有效期至"};
-        int[] widths = {18, 12, 18, 26, 14, 22, 10, 20, 14};
-        ByteArrayOutputStream out = new ByteArrayOutputStream();
-        try (org.apache.poi.ss.usermodel.Workbook workbook = new org.apache.poi.xssf.usermodel.XSSFWorkbook()) {
-            org.apache.poi.ss.usermodel.Sheet sheet = workbook.createSheet("用户列表");
-            org.apache.poi.ss.usermodel.CellStyle headStyle = workbook.createCellStyle();
-            org.apache.poi.ss.usermodel.Font font = workbook.createFont();
-            font.setBold(true);
-            headStyle.setFont(font);
-            org.apache.poi.ss.usermodel.Row head = sheet.createRow(0);
-            for (int i = 0; i < headers.length; i++) {
-                org.apache.poi.ss.usermodel.Cell cell = head.createCell(i);
-                cell.setCellValue(headers[i]);
-                cell.setCellStyle(headStyle);
-                sheet.setColumnWidth(i, widths[i] * 256);
-            }
-            int rowIndex = 1;
-            for (User user : users) {
-                org.apache.poi.ss.usermodel.Row row = sheet.createRow(rowIndex++);
-                int col = 0;
-                row.createCell(col++).setCellValue(StrUtil.nullToEmpty(user.getUserId()));
-                row.createCell(col++).setCellValue(StrUtil.nullToEmpty(user.getUserName()));
-                row.createCell(col++).setCellValue(StrUtil.nullToEmpty(user.getOrganization()));
-                row.createCell(col++).setCellValue(StrUtil.nullToEmpty(user.getEmail()));
-                row.createCell(col++).setCellValue(StrUtil.nullToEmpty(user.getCdPhone()));
-                row.createCell(col++).setCellValue(user.permissionText());
-                row.createCell(col++).setCellValue(user.statusText());
-                row.createCell(col++).setCellValue(user.getCreateTime() == null ? "—" : Util.formatDateTime(user.getCreateTime()));
-                row.createCell(col).setCellValue(user.getExpireTime() == null ? "长期有效" : Util.formatDate(user.getExpireTime()));
-            }
-            // 冻结表头，往下翻时仍然知道每一列是什么
-            sheet.createFreezePane(0, 1);
-            workbook.write(out);
-        } catch (Exception e) {
-            log.error("生成用户列表 xlsx 失败", e);
-            return new byte[0];
-        }
-        return out.toByteArray();
     }
 
     // ==================================================================
