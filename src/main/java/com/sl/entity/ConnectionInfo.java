@@ -19,9 +19,23 @@ public class ConnectionInfo {
 	 */
 	@TableField("cd_desc")
 	private String desc;
+	/**
+	 * 所属分组名（cd_group 列）。空白或 {@code null} 一律按「默认分组」处理，
+	 * 这样 remoteServerList.conf 来源的机器（界面写不了分组）天然落在默认分组。
+	 */
+	private String cdGroup;
 	
 	
 	
+	/**
+	 * MyBatis-Plus 实例化实体时优先找无参构造器走 setter 映射；
+	 * 只有带参构造器时它会按「列数 = 参数个数」匹配构造器，
+	 * 加字段后列数变了就对不上（实测报 No constructor found ... matching 8 args）。
+	 * 所以无参构造器必须保留。
+	 */
+	public ConnectionInfo() {
+	}
+
 	public ConnectionInfo(String idHost, String cdPort, String idUser, String cdPassword, String cdKeyPath) {
 		super();
 		this.idHost = idHost;
@@ -95,6 +109,14 @@ public class ConnectionInfo {
 
 	public void setDesc(String desc) {
 		this.desc = desc;
+	}
+
+	public String getCdGroup() {
+		return cdGroup;
+	}
+
+	public void setCdGroup(String cdGroup) {
+		this.cdGroup = cdGroup;
 	}
 
 	@Override

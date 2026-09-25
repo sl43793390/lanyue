@@ -3,7 +3,9 @@ package com.sl.ui.remote;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sl.entity.ConnectionInfo;
+import com.sl.entity.ServerGroup;
 import com.sl.mapper.ConnectionInfoMapper;
+import com.sl.mapper.ServerGroupMapper;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.TabHost;
 import com.sl.ui.remote.RemoteAppMgmtView;
@@ -20,8 +22,9 @@ import com.sl.util.Util;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
+import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.dialog.Dialog;
-import com.vaadin.flow.component.grid.Grid;
+import com.vaadin.flow.component.html.Hr;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
@@ -32,7 +35,6 @@ import com.vaadin.flow.component.upload.Upload;
 import com.vaadin.flow.server.streams.UploadHandler;
 import com.vaadin.flow.spring.annotation.SpringComponent;
 import com.vaadin.flow.spring.annotation.UIScope;
-import com.vaadin.flow.spring.annotation.VaadinSessionScope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
@@ -40,7 +42,6 @@ import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Service;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -51,18 +52,14 @@ import java.util.Set;
  * <p>
  * 连接信息来自两个来源（与旧项目一致，不额外造第三份配置）：
  * <ol>
- *   <li>数据库 {@code connection_info} 表——「添加机器」弹窗写入的；</li>
+ *   <li>数据库 {@code connection_info} 表——「添加机器」弹窗写入的，带分组（{@code cd_group}）；</li>
  *   <li>classpath 下 {@code remoteServerList.conf}——免登录配置，
- *       格式 {@code ip=用户=密码=端口[=私钥文件名]}，只能改文件不能在界面删。</li>
+ *       格式 {@code ip=用户=密码=端口[=私钥文件名]}，只能改文件不能在界面删，固定归默认分组。</li>
  * </ol>
- * 每一行是一台机器，行内按钮直达对应功能页：Docker / Compose 本轮已迁移，
- * 会带着这一行的连接信息一步到位打开；应用管理 / SSH 终端 / 文件管理 / 指标监控
- * 还在迁移队列里，点击时明确提示而不是静默无响应。
- * <p>
- * 与旧实现 {@code com.so.component.remote.RemoteServerListComponent} 的差别：
- * 绝对定位的一行一台（{@code AbsoluteLayout + "left:150px"}）换成 Grid；
- * 「删除配置文件里的机器」旧实现靠 {@code delete()==0} 的返回值兜底提示，这里
- * 先标记来源，配置文件来源的直接不给删除按钮，省一次注定失败的点击。
+ * 展示不再用表格，按分组分卡片：每个分组一个带浅色边框的竖排容器，
+ * 组名在最上方，组内一台机器一行（主机 / 端口 / 用户 / 备注悬浮全文 / 行内操作按钮）；
+ * 分组卡片之间用浅绿色分割线隔开。工具栏可以新建分组、按分组筛选，
+ * 「添加机器」弹窗顶部可选分组，不选就落默认分组。
  */
 @Service
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
@@ -72,84 +69,73 @@ public class RemoteServerListView extends ViewBase {
 
     private static final Logger log = LoggerFactory.getLogger(RemoteServerListView.class);
 
+    /** 虚拟的默认分组：表里不建这一行，所有没分组的机器（含配置文件来源）都归它 */
+    public static final String DEFAULT_GROUP = "默认分组";
+
+    /** 分组筛选下拉框里「看全部分组」的哨兵值 */
+    private static final String FILTER_ALL = "全部分组";
+
     /** 一台机器的展示模型：数据库与配置文件两种来源统一成一行 */
     public record ServerRow(ConnectionInfo info, boolean fromDb) {
     }
 
     private final transient ConnectionInfoMapper connectionInfoMapper;
+    private final transient ServerGroupMapper serverGroupMapper;
     private final transient org.springframework.context.ApplicationContext applicationContext;
 
-    private final Grid<ServerRow> grid = UiFactory.grid(ServerRow.class);
+    /** 工具栏上的分组筛选下拉框：值 {@code null} 或 {@link #FILTER_ALL} 都表示看全部 */
+    private final ComboBox<String> filterCombo = new ComboBox<>();
     private final Span statusLabel = new Span();
 
+    /** 分组展示容器：reload 后整树重建（结构简单，不值得做增量刷新） */
+    private final VerticalLayout groupContainer = new VerticalLayout();
+
+    /** 当前全部分组名（默认分组永远在最前）与全部机器行，renderGroups 据此渲染 */
+    private transient List<String> groupNames = new ArrayList<>();
+    private transient List<ServerRow> allRows = new ArrayList<>();
+
     public RemoteServerListView(ConnectionInfoMapper connectionInfoMapper,
+                                ServerGroupMapper serverGroupMapper,
                                 org.springframework.context.ApplicationContext applicationContext) {
         this.connectionInfoMapper = connectionInfoMapper;
+        this.serverGroupMapper = serverGroupMapper;
         this.applicationContext = applicationContext;
 
         add(title("免登录服务器列表"));
-        add(subtitle("数据库与 remoteServerList.conf 里的机器统一列出，可直达各管理功能页。"));
+        add(subtitle("数据库与 remoteServerList.conf 里的机器按分组列出，可直达各管理功能页。"));
+
+        filterCombo.setPlaceholder("按分组筛选");
+        filterCombo.setWidth("220px");
+        filterCombo.setClearButtonVisible(true);
+        filterCombo.addValueChangeListener(e -> renderGroups());
 
         HorizontalLayout bar = toolbar(
                 UiFactory.primary("刷新列表", this::reload),
                 UiFactory.primary("添加机器", this::showAddDialog),
+                UiFactory.button("新建分组", this::showNewGroupDialog),
                 spacer(),
+                filterCombo,
                 statusLabel);
         add(bar);
 
-        buildGrid();
-        VerticalLayout fill = fill(grid);
-        add(fill);
-        setFlexGrow(1, fill);
+        groupContainer.addClassName("server-group-container");
+        groupContainer.setPadding(false);
+        groupContainer.setSpacing(false);
+        // 容器本身不限宽，宽度交外层布局拉伸（FlexLayout 默认 flex-start 的老坑不走这里）
+        groupContainer.setDefaultHorizontalComponentAlignment(FlexComponent.Alignment.STRETCH);
+        add(groupContainer);
 
         reload();
-    }
-
-    // ------------------------------------------------------------------
-    // 表格
-    // ------------------------------------------------------------------
-
-    private void buildGrid() {
-        grid.addColumn(row -> StrUtil.blankToDefault(row.info().getIdHost(),"")).setHeader("主机").setAutoWidth(true)
-                .setComparator((a, b) -> StrUtil.nullToEmpty(a.info().getIdHost())
-                        .compareTo(StrUtil.nullToEmpty(b.info().getIdHost())));
-        grid.addColumn(row -> StrUtil.blankToDefault(row.info().getCdPort(), "22")).setHeader("端口").setAutoWidth(true);
-        grid.addColumn(row -> StrUtil.nullToEmpty(row.info().getIdUser())).setHeader("用户").setAutoWidth(true);
-        grid.addColumn(row -> StrUtil.nullToEmpty(row.info().getDesc())).setHeader("备注").setAutoWidth(true);
-        grid.addComponentColumn(this::buildRowActions).setHeader("操作").setAutoWidth(true);
-    }
-
-    private Component buildRowActions(ServerRow row) {
-        ConnectionInfo info = row.info();
-
-        // 行内操作多且文字长，透明底蓝字挤在一起极易点错（用户反馈过）：
-        // 统一浅色底 + 8px 间隔，删除保持红色。
-        Button dockerBtn = UiFactory.rowAction("容器和镜像管理", () -> openDocker(info));
-        Button composeBtn = UiFactory.rowAction("Compose 管理", () -> openCompose(info));
-        Button appBtn = UiFactory.rowAction("应用管理", () -> openAppMgmt(info));
-        Button sshBtn = UiFactory.rowAction("SSH 终端", () -> openSshTerminal(info));
-        Button fileBtn = UiFactory.rowAction("文件管理", () -> openFileMgmt(info));
-        Button monitorBtn = UiFactory.rowAction("指标监控", () -> openMonitor(info));
-
-        HorizontalLayout actions = new HorizontalLayout(dockerBtn, composeBtn, appBtn, sshBtn, fileBtn, monitorBtn);
-        actions.addClassName("row-actions");
-        actions.setSpacing(false);
-        actions.setAlignItems(FlexComponent.Alignment.CENTER);
-        if (row.fromDb()) {
-            Button deleteBtn = UiFactory.rowDanger("删除", () -> confirmDelete(row));
-            actions.add(deleteBtn, monitorBtn);
-        } else {
-            actions.add(monitorBtn);
-        }
-        return actions;
     }
 
     // ------------------------------------------------------------------
     // 数据加载
     // ------------------------------------------------------------------
 
-    /** 数据库 + 配置文件合并。按 host:port:用户 去重，数据库优先（界面可维护的优先展示）。 */
+    /** 分组定义 + 机器列表 + 机器归属合并，然后按当前筛选重画。 */
     private void reload() {
+        loadGroups();
+
         List<ServerRow> rows = new ArrayList<>();
         Set<String> seen = new LinkedHashSet<>();
 
@@ -179,10 +165,42 @@ public class RemoteServerListView extends ViewBase {
             log.warn("读取 remoteServerList.conf 失败：{}", e.getMessage());
         }
 
-        grid.setItems(rows);
-        statusLabel.setText("共 " + rows.size() + " 台机器（数据库 "
-                + rows.stream().filter(ServerRow::fromDb).count() + "，配置文件 "
-                + rows.stream().filter(row -> !row.fromDb()).count() + "）");
+        allRows = rows;
+
+        // 刷新筛选下拉框：保留当前选中项（还在列表里的话）
+        String selected = filterCombo.getValue();
+        List<String> filterItems = new ArrayList<>();
+        filterItems.add(FILTER_ALL);
+        filterItems.addAll(groupNames);
+        filterCombo.setItems(filterItems);
+        filterCombo.setValue(selected != null && filterItems.contains(selected) ? selected : FILTER_ALL);
+
+        renderGroups();
+        statusLabel.setText("共 " + allRows.size() + " 台机器（数据库 "
+                + allRows.stream().filter(ServerRow::fromDb).count() + "，配置文件 "
+                + allRows.stream().filter(row -> !row.fromDb()).count() + "，"
+                + groupNames.size() + " 个分组）");
+    }
+
+    /** 读分组定义。默认分组是虚拟的、永远排第一；库里可能与默认分组重名，去重并忽略。 */
+    private void loadGroups() {
+        List<String> groups = new ArrayList<>();
+        groups.add(DEFAULT_GROUP);
+        try {
+            List<ServerGroup> fromDb = serverGroupMapper.selectList(
+                    new QueryWrapper<ServerGroup>().orderByAsc("group_name"));
+            if (fromDb != null) {
+                for (ServerGroup group : fromDb) {
+                    String name = group.getGroupName();
+                    if (StrUtil.isNotBlank(name) && !groups.contains(name)) {
+                        groups.add(name);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("读取服务器分组失败：{}", e.getMessage());
+        }
+        groupNames = groups;
     }
 
     private static void addRow(List<ServerRow> rows, Set<String> seen, ConnectionInfo info, boolean fromDb) {
@@ -195,6 +213,141 @@ public class RemoteServerListView extends ViewBase {
             return;
         }
         rows.add(new ServerRow(info, fromDb));
+    }
+
+    /** 一台机器的归属分组：数据库来源按 cd_group，空白/配置文件来源都算默认分组。 */
+    private static String groupOf(ServerRow row) {
+        String group = row.info().getCdGroup();
+        return row.fromDb() && StrUtil.isNotBlank(group) ? group.trim() : DEFAULT_GROUP;
+    }
+
+    // ------------------------------------------------------------------
+    // 分组卡片渲染
+    // ------------------------------------------------------------------
+
+    private void renderGroups() {
+        groupContainer.removeAll();
+
+        String selected = filterCombo.getValue();
+        boolean filtering = selected != null && !FILTER_ALL.equals(selected);
+
+        List<String> visibleGroups = new ArrayList<>();
+        for (String group : groupNames) {
+            if (!filtering || group.equals(selected)) {
+                visibleGroups.add(group);
+            }
+        }
+
+        if (visibleGroups.isEmpty()) {
+            groupContainer.add(UiFactory.emptyHint("没有符合条件的服务器分组"));
+            return;
+        }
+
+        boolean first = true;
+        for (int i = 0; i < visibleGroups.size(); i++) {
+            String group = visibleGroups.get(i);
+            if (!first) {
+                // 分组卡片之间的浅绿色分割线，样式见 styles.css .server-group-divider
+                Hr divider = UiFactory.divider();
+                divider.addClassName("server-group-divider");
+                groupContainer.add(divider);
+            }
+            first = false;
+            groupContainer.add(buildGroupCard(group, i));
+        }
+    }
+
+    /** 一个分组一张卡：浅色边框容器，顶部组名，组内一台机器一行。 */
+    private VerticalLayout buildGroupCard(String groupName, int index) {
+        List<ServerRow> rows = new ArrayList<>();
+        for (ServerRow row : allRows) {
+            if (groupOf(row).equals(groupName)) {
+                rows.add(row);
+            }
+        }
+
+        VerticalLayout card = new VerticalLayout();
+        card.addClassName("server-group-card");
+        card.setPadding(true);
+        card.setSpacing(false);
+        card.getStyle().set("gap", "0px");
+
+        HorizontalLayout header = new HorizontalLayout();
+        header.addClassName("server-group-header");
+        header.setSpacing(false);
+        header.setAlignItems(FlexComponent.Alignment.CENTER);
+        header.getStyle().set("gap", "8px");
+        // 分组圆点蓝绿交替，纯装饰，但让相邻分组一眼能区分
+        Span dot = new Span();
+        dot.addClassName(index % 2 == 0 ? "server-group-dot-blue" : "server-group-dot-green");
+        Span name = new Span(groupName);
+        name.addClassName("server-group-name");
+        Span count = new Span(rows.size() + " 台机器");
+        count.addClassName("server-group-count");
+        header.add(dot, name, count);
+        card.add(header);
+
+        if (rows.isEmpty()) {
+            card.add(UiFactory.emptyHint("该分组暂无机器，点上方「添加机器」并选择该分组即可"));
+            return card;
+        }
+        for (ServerRow row : rows) {
+            card.add(buildMachineRow(row));
+        }
+        return card;
+    }
+
+    /** 组内一行 = 一台机器：主机 / 端口 / 用户 / 备注（悬浮显示全文）/ 行内操作。 */
+    private HorizontalLayout buildMachineRow(ServerRow row) {
+        ConnectionInfo info = row.info();
+
+        HorizontalLayout line = new HorizontalLayout();
+        line.addClassName("server-machine-row");
+        line.setWidthFull();
+        line.setSpacing(false);
+        line.setAlignItems(FlexComponent.Alignment.CENTER);
+        line.getStyle().set("gap", "16px");
+
+        Span host = new Span(StrUtil.nullToEmpty(info.getIdHost()));
+        host.addClassName("server-machine-host");
+
+        Span port = new Span("端口 " + StrUtil.blankToDefault(info.getCdPort(), "22"));
+        port.addClassName("server-machine-meta");
+
+        Span user = new Span("用户 " + StrUtil.nullToEmpty(info.getIdUser()));
+        user.addClassName("server-machine-meta");
+
+        // 备注可能很长：行内截断省略，完整内容放原生 title（Span 没有 setTooltipText）
+        Span desc = new Span(StrUtil.blankToDefault(info.getDesc(), "无备注"));
+        desc.addClassName("server-machine-desc");
+        desc.getElement().setAttribute("title",
+                StrUtil.blankToDefault(info.getDesc(), "这台机器没有填写备注"));
+        line.setFlexGrow(1, desc);
+
+        line.add(host, port, user, desc, buildRowActions(row));
+        return line;
+    }
+
+    private Component buildRowActions(ServerRow row) {
+        ConnectionInfo info = row.info();
+
+        // 行内操作多且文字长，透明底蓝字挤在一起极易点错（用户反馈过）：
+        // 统一浅色底 + 8px 间隔，删除保持红色。
+        Button dockerBtn = UiFactory.rowAction("容器和镜像管理", () -> openDocker(info));
+        Button composeBtn = UiFactory.rowAction("Compose 管理", () -> openCompose(info));
+        Button appBtn = UiFactory.rowAction("应用管理", () -> openAppMgmt(info));
+        Button sshBtn = UiFactory.rowAction("SSH 终端", () -> openSshTerminal(info));
+        Button fileBtn = UiFactory.rowAction("文件管理", () -> openFileMgmt(info));
+        Button monitorBtn = UiFactory.rowAction("指标监控", () -> openMonitor(info));
+
+        HorizontalLayout actions = new HorizontalLayout(dockerBtn, composeBtn, appBtn, sshBtn, fileBtn, monitorBtn);
+        actions.addClassName("row-actions");
+        actions.setSpacing(false);
+        actions.setAlignItems(FlexComponent.Alignment.CENTER);
+        if (row.fromDb()) {
+            actions.add(UiFactory.rowDanger("删除", () -> confirmDelete(row)));
+        }
+        return actions;
     }
 
     // ------------------------------------------------------------------
@@ -277,6 +430,71 @@ public class RemoteServerListView extends ViewBase {
     }
 
     // ------------------------------------------------------------------
+    // 分组管理
+    // ------------------------------------------------------------------
+
+    private void showNewGroupDialog() {
+        if (!hasPermission(Constants.ADD)) {
+            Dialogs.warn("权限不足，无法创建分组");
+            return;
+        }
+        new NewGroupDialog().open();
+    }
+
+    /** 「新建分组」弹窗：输入分组名，重名 / 默认分组名 / 超长都拦在保存前。 */
+    private class NewGroupDialog extends Dialog {
+
+        private final TextField nameField = UiFactory.textField("分组名称", "如：生产环境", "500px");
+
+        NewGroupDialog() {
+            setHeaderTitle("新建分组");
+            setWidth("620px");
+            setCloseOnEsc(true);
+            setCloseOnOutsideClick(false);
+
+            VerticalLayout form = new VerticalLayout(nameField);
+            form.setPadding(false);
+            form.setSpacing(false);
+            form.getStyle().set("gap", "10px");
+            add(form);
+
+            Button cancel = Dialogs.cancelButton(this::close);
+            Button save = Dialogs.primaryButton("创建分组", this::save);
+            getFooter().add(Dialogs.dialogActions(cancel, save));
+        }
+
+        private void save() {
+            String name = StrUtil.trim(nameField.getValue());
+            if (StrUtil.isBlank(name)) {
+                Dialogs.warn("请填写分组名称");
+                return;
+            }
+            if (name.length() > 20) {
+                Dialogs.warn("分组名称最多 20 个字");
+                return;
+            }
+            if (DEFAULT_GROUP.equals(name)) {
+                Dialogs.warn("「默认分组」是内置分组，不需要创建");
+                return;
+            }
+            if (groupNames.contains(name)) {
+                Dialogs.warn("分组「" + name + "」已经存在");
+                return;
+            }
+            try {
+                serverGroupMapper.insert(new ServerGroup(name));
+            } catch (Exception e) {
+                log.warn("创建分组 {} 失败：{}", name, e.getMessage());
+                Dialogs.warn("创建失败，这个分组名可能刚被其他人建过");
+                return;
+            }
+            close();
+            reload();
+            Dialogs.success("已创建分组「" + name + "」，添加机器时可以选它");
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 删除（只有数据库来源可删）
     // ------------------------------------------------------------------
 
@@ -324,9 +542,12 @@ public class RemoteServerListView extends ViewBase {
      * （旧实现里按 Integer 端口去匹配构造器，走的是密码分支，「上传了私钥」
      * 这条路其实从没验证过——这里统一走 {@link SSHClientUtil#connect}）。
      * 验证用的连接用完立即关闭，不做持久连接。
+     * <p>
+     * 顶部分组下拉框：不选（或选默认分组）就落 {@link #DEFAULT_GROUP}。
      */
     private class AddServerDialog extends Dialog {
 
+        private final ComboBox<String> groupField = new ComboBox<>("分组");
         private final TextField hostField = UiFactory.textField("主机", "192.168.1.10 或 host.example.com","500px");
         private final TextField portField = UiFactory.textField("端口","","500px");
         private final TextField userField = UiFactory.textField("用户名","","500px");
@@ -343,9 +564,15 @@ public class RemoteServerListView extends ViewBase {
             setCloseOnEsc(false);
             setCloseOnOutsideClick(false);
 
+            groupField.setItems(groupNames);
+            groupField.setWidth("500px");
+            groupField.setClearButtonVisible(true);
+            groupField.setPlaceholder("不选则归入默认分组");
+
             portField.setValue("22");
 
             VerticalLayout form = new VerticalLayout(
+                    groupField,
                     hostField,
                     new HorizontalLayout(portField),
                     userField, passField, keyCheck, buildKeyUpload(), descField);
@@ -393,6 +620,12 @@ public class RemoteServerListView extends ViewBase {
             String user = StrUtil.trim(userField.getValue());
             String password = passField.getValue();
             String desc = StrUtil.trim(descField.getValue());
+            // 不选分组 → 默认分组
+            String group = StrUtil.blankToDefault(StrUtil.trim(groupField.getValue()), DEFAULT_GROUP);
+            if (!groupNames.contains(group)) {
+                Dialogs.warn("所选分组「" + group + "」不存在，请重新选择或先创建分组");
+                return;
+            }
 
             if (StrUtil.isBlank(host) || StrUtil.isBlank(user)) {
                 Dialogs.warn("请填写主机与用户名");
@@ -413,6 +646,7 @@ public class RemoteServerListView extends ViewBase {
 
             ConnectionInfo candidate = new ConnectionInfo(host, port, user, password,
                     keyCheck.getValue() ? uploadedKeyPath : null, desc);
+            candidate.setCdGroup(group);
             try {
                 // 只验证一次连通性，用完立即关闭；密钥可用性也是这一步真正测出来的
                 SSHClientUtil client = SSHClientUtil.connect(candidate);
@@ -433,7 +667,7 @@ public class RemoteServerListView extends ViewBase {
             }
             close();
             reload();
-            Dialogs.success("已添加 " + host);
+            Dialogs.success("已添加 " + host + "（分组：" + group + "）");
         }
     }
 

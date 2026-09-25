@@ -63,8 +63,6 @@ import java.util.function.Supplier;
 @PreserveOnRefresh
 public class MainView extends VerticalLayout implements TabHost {
 
-    private static final long serialVersionUID = 1L;
-
     private final transient ApplicationContext applicationContext;
     private final transient AuthenticationContext authenticationContext;
 

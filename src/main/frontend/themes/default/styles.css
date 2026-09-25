@@ -715,3 +715,113 @@ vaadin-text-area[has-label]::part(label) {
 .row-actions vaadin-button[disabled] {
     opacity: 1;
 }
+
+/* ============================================================
+   免登录服务器列表：分组卡片视图。
+   每个分组一张浅色边框卡片，组间浅绿色分割线，组内一台机器一行。
+   ============================================================ */
+
+.server-group-container {
+    gap: 0;
+}
+
+/* 分组卡片：浅蓝灰边框 + 白底，悬停时边框加深一点 */
+.server-group-card {
+    width: 100%;
+    background-color: var(--lumo-base-color);
+    border: 1px solid var(--lumo-contrast-15pct);
+    border-radius: var(--lumo-border-radius-m);
+    box-shadow: 0 1px 2px rgba(31, 41, 55, 0.05);
+    transition: border-color 0.15s ease;
+}
+
+.server-group-card:hover {
+    border-color: rgba(37, 99, 235, 0.45);
+}
+
+/* 组间分割线：浅绿色 */
+.server-group-divider {
+    margin: 10px 0;
+    border: none;
+    border-top: 2px solid rgba(16, 185, 129, 0.35);
+    width: 100%;
+}
+
+/* 卡片头部：组名 + 机器数 */
+.server-group-header {
+    width: 100%;
+    padding-bottom: 8px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--lumo-contrast-10pct);
+}
+
+.server-group-dot-blue,
+.server-group-dot-green {
+    flex: 0 0 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.server-group-dot-blue {
+    background-color: #2563eb;
+}
+
+.server-group-dot-green {
+    background-color: #10b981;
+}
+
+.server-group-name {
+    font-size: var(--lumo-font-size-m);
+    font-weight: 600;
+    color: var(--lumo-header-text-color);
+}
+
+.server-group-count {
+    font-size: var(--lumo-font-size-xs);
+    color: #047857;
+    background-color: rgba(16, 185, 129, 0.12);
+    border-radius: 999px;
+    padding: 1px 10px;
+}
+
+/* 组内机器行：白底通栏，悬停浅蓝绿底色提示当前行 */
+.server-machine-row {
+    padding: 6px 4px;
+    border-bottom: 1px dashed var(--lumo-contrast-10pct);
+    border-radius: var(--lumo-border-radius-s);
+    transition: background-color 0.12s ease;
+}
+
+.server-machine-row:last-of-type {
+    border-bottom: none;
+}
+
+.server-machine-row:hover {
+    background-color: rgba(37, 99, 235, 0.06);
+}
+
+/* 主机名加粗突出；端口 / 用户是弱化的元信息 */
+.server-machine-host {
+    font-weight: 600;
+    font-size: var(--lumo-font-size-m);
+    color: #1d4ed8;
+    min-width: 140px;
+}
+
+.server-machine-meta {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+    white-space: nowrap;
+}
+
+/* 备注：单行截断省略，完整内容靠 tooltip（buildMachineRow 里 setTooltipText） */
+.server-machine-desc {
+    font-size: var(--lumo-font-size-s);
+    color: #6b7280;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    /* flex-grow 在 Java 侧 setFlexGrow(1, desc)，这里只负责约束不撑破 */
+    flex-basis: 60px;
+}

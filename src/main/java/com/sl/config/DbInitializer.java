@@ -120,8 +120,13 @@ public class DbInitializer implements ApplicationRunner {
                             {"cd_password", 255, false},
                             {"cd_key_path", 255, false},
                             {"cd_logpath", 255, false},
-                            {"cd_desc", 255, false}},
+                            {"cd_desc", 255, false},
+                            {"cd_group", 64, false}},
                     new String[] {"id_host", "cd_port", "id_user"}),
+            new TableDef("server_group",
+                    new Object[][] {
+                            {"group_name", 64, true}},
+                    new String[] {"group_name"}),
             new TableDef("log_path",
                     new Object[][] {
                             {"id_loghost", 64, true},

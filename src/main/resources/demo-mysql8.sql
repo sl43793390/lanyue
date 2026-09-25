@@ -118,13 +118,30 @@ CREATE TABLE `connection_info` (
     `cd_key_path` VARCHAR(255),
     `cd_logpath`  VARCHAR(255),
     `cd_desc`     VARCHAR(255),
+    `cd_group`    VARCHAR(64),
     PRIMARY KEY (`id_host`, `cd_port`, `id_user`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ----------------------------
+-- Table structure for server_group（免登录服务器列表的分组定义）
+-- 只有分组名一列；机器归属在 connection_info.cd_group 上。
+-- 「默认分组」是虚拟的，不写进这张表。
+-- ----------------------------
+DROP TABLE IF EXISTS `server_group`;
+CREATE TABLE `server_group` (
+    `group_name`  VARCHAR(64)  NOT NULL,
+    PRIMARY KEY (`group_name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO `server_group` (`group_name`) VALUES ('生产环境'), ('测试环境');
+
+-- ----------------------------
+-- Records of connection_info
+-- ----------------------------
 INSERT INTO `connection_info`
-    (`id_host`, `cd_port`, `id_user`, `cd_password`, `cd_key_path`, `cd_logpath`, `cd_desc`)
+    (`id_host`, `cd_port`, `id_user`, `cd_password`, `cd_key_path`, `cd_logpath`, `cd_desc`, `cd_group`)
 VALUES
-    ('192.168.190.100', '22', 'root', 'test', NULL, NULL, '测试');
+    ('192.168.190.100', '22', 'root', 'test', NULL, NULL, '测试', '默认分组');
 
 -- ----------------------------
 -- Table structure for log_path（远程主机上的日志目录）
