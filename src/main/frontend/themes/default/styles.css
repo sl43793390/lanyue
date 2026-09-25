@@ -1,0 +1,717 @@
+/*
+ * 全局样式。Lumo 主题的变量（--lumo-*）都已可用，这里只补项目自己的版式。
+ *
+ * 与旧项目的区别值得记一笔：旧项目的 styles.css 是 Valo 主题的**编译产物**，
+ * 里面混了几十条手工覆盖规则，还要跟 .v-slot / .v-widget 这套 DOM 结构斗。
+ * Vaadin 24 走的是标准 CSS + Shadow DOM，没有编译产物，样式就是纯 CSS。
+ */
+
+/* 全局 box-sizing。
+ *
+ * 背景：Vaadin 组件在 shadow DOM 的 :host 上设了 border-box，而原生 div
+ * （比如我们自己 add 出来的容器）仍是浏览器默认的 content-box。
+ * 于是「width: 100% + padding」会把元素顶宽成 100% + padding：
+ * 实测 .main-tab-content 的 CSS 宽度 1424px、clientWidth 却是 1456px，
+ * 正好多出左右各 16px 的 padding，右侧内容被裁。
+ *
+ * 注意：下面这条 reset 在本项目里**实测没有按预期生效**——
+ * 加完之后 html 的 computed box-sizing 确实变成了 border-box，
+ * 但 .main-tab-content 仍是 content-box（原因未完全定位，
+ * 怀疑与主题 CSS 落进 @layer 后的层叠优先级有关）。所以**不要依赖它**。
+ * 真正解决问题的是「不给容器写 width: 100%」，把宽度交给 flex 的 align-items: stretch
+ * （见 MainView#buildContentArea）。这条规则留着，是为了将来排查同类问题时少一个变量。 */
+html {
+    box-sizing: border-box;
+}
+
+*,
+*::before,
+*::after {
+    /*box-sizing: inherit;*/
+}
+
+html,
+body {
+    height: 100%;
+    margin: 0;
+}
+
+/* ==========================================================
+   登录页：左侧品牌区 + 右侧登录卡片
+   ========================================================== */
+
+.login-view {
+    height: 100vh;
+    background-color: var(--lumo-base-color);
+}
+
+.login-brand {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 20px;
+    height: 100%;
+    /* 品牌区固定占 1/3；Java 侧不要再写内联 flex（会覆盖这里的简写）。
+       不要用 flex-grow 比例 + flex-basis:0 实现：basis 为 0 且 min-content>0
+       时 Chrome 会把 flex 因子当 0 处理（CSS Flexbox §9.7），比例必然失真。 */
+    flex: 0 0 33.33%;
+    min-width: 0;
+    /* 必须 border-box：Lumo 的 box-sizing reset 对原生 div 不生效（@layer 优先级），
+       content-box 下 48px 左右内边距会叠加到 flex 份额之外 */
+    box-sizing: border-box;
+    padding: 0 48px;
+    background-color: #1f2937;
+    color: #f9fafb;
+}
+
+.login-brand-title {
+    margin: 0;
+    font-size: 32px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    /* color 必须显式写：h1 在 Lumo 里有自己的 color（--lumo-header-text-color），
+       不会从父元素 .login-brand 继承浅色。不写就是深灰压在深色底上，几乎看不见。 */
+    color: #f9fafb;
+}
+
+.login-brand-slogan {
+    margin: 0;
+    font-size: var(--lumo-font-size-l);
+    color: #9ca3af;
+    letter-spacing: 2px;
+}
+
+.login-brand-hint {
+    max-width: 26em;
+    margin: 12px 0 0;
+    font-size: var(--lumo-font-size-s);
+    line-height: 1.8;
+    color: #d1d5db;
+}
+
+.login-panel {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 16px;
+    height: 100%;
+    /* 吃掉品牌区剩下的 2/3；min-width:0 必须保留，否则 min-content>0
+       会让 flex 因子被 Chrome 归零，比例失效（见 .login-brand 注释） */
+    flex: 1 1 0px;
+    min-width: 0;
+    background-color: var(--lumo-base-color);
+}
+
+.login-panel-footer {
+    font-size: var(--lumo-font-size-xs);
+    color: var(--lumo-tertiary-text-color);
+}
+
+/* 窄屏收起品牌区，把整屏让给登录卡片。
+   旧项目用的是 ≤1000px 断点，这里保持一致。 */
+@media (max-width: 1000px) {
+    .login-brand {
+        display: none;
+    }
+}
+
+/* ------------------------------------------------------------
+   登录页字段还原为默认布局（label 在输入框上方）。
+   背景：vaadin-login-form 组件没有 shadowRoot（源码 _attachDom 把模板
+   append 到 light DOM，为了让密码管理器读到表单值），所以下面这段
+   全局"label 左置"规则会直接命中登录页的 用户名/密码 字段，
+   必须在这里覆盖回去。特异性 (0,2,1) 高于全局的 (0,1,1)。
+   ------------------------------------------------------------ */
+.login-view vaadin-text-field[has-label],
+.login-view vaadin-password-field[has-label] {
+    position: static;
+    padding-left: 0;
+}
+
+.login-view vaadin-text-field[has-label]::part(label),
+.login-view vaadin-password-field[has-label]::part(label) {
+    position: static;
+    transform: none;
+    width: auto;
+    padding-right: 0;
+}
+
+/* ==========================================================
+   主框架：顶栏 + 菜单 + 多标签内容区
+   ========================================================== */
+
+.main-view {
+    height: 100%;
+    overflow: hidden;
+    background-color: var(--lumo-contrast-5pct);
+}
+
+/* 顶栏第一行：标题 + 用户名/退出。
+   宽度不写 100%，由 MainView 纵向 flex 的 align-items: stretch 撑满（老坑见上）。 */
+.main-topbar {
+    height: 56px;
+    min-height: 56px;
+    padding: 0 16px;
+    background-color: var(--lumo-base-color);
+}
+
+.main-header-logo {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 1px;
+    white-space: nowrap;
+    color: var(--lumo-header-text-color);
+}
+
+.main-header-spacer {
+    flex: 1 1 auto;
+}
+
+/* 顶栏第二行：一整行深蓝底的菜单。
+   高度固定，不允许被内容撑开；菜单按钮透明底 + 浅色字，悬停浮起白色高光，
+   弹出的子菜单保持浅色（不用跟着染深）。 */
+.main-menu-row {
+    display: flex;
+    align-items: center;
+    height: 44px;
+    padding: 0 12px;
+    background-color: #1f3a60;
+    border-bottom: 1px solid #16294a;
+    box-shadow: 0 1px 3px rgba(15, 35, 70, 0.25);
+}
+
+.main-menu-row vaadin-menu-bar {
+    --vaadin-menu-bar-button-height: 32px;
+    background: transparent;
+}
+
+/*
+ * vaadin-menu-bar-button 是 menu-bar 的 light DOM 子元素（shadow 模板里只有 slot），
+ * 文档样式可以直接命中它，且优先级高于按钮 shadow 里的 :host 规则——
+ * 不能用 ::part()（24.10 的按钮模板上根本没有 part 属性，选择器是空转）。
+ * Lumo 按钮的悬停/按下高光走 currentColor 的 ::before 叠层，文字变浅色后自动生效。
+ */
+.main-menu-row vaadin-menu-bar-button {
+    background: transparent;
+    color: #d7e3f4;
+    border-radius: var(--lumo-border-radius-s);
+}
+
+.main-menu-row vaadin-menu-bar-button:hover {
+    background-color: rgba(255, 255, 255, 0.14);
+    color: #ffffff;
+}
+
+/* 还没迁移过来的功能：菜单项弱化显示，点进去会明确提示，而不是 404 */
+.main-menu-item-pending {
+    opacity: 0.45;
+}
+
+.main-header-user {
+    gap: 8px;
+}
+
+.main-header-username {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+    white-space: nowrap;
+}
+
+/* ==========================================================
+   多标签内容区
+   ========================================================== */
+
+.main-content-area {
+    min-height: 0;
+}
+
+/* 标签栏。标签多时不换行（换行会顶掉内容区高度），交给 vaadin-tabs 自己横向滚动。 */
+.main-tabs-bar {
+    flex: 0 0 auto;
+    padding: 0 8px;
+    background-color: var(--lumo-base-color);
+    border-bottom: 1px solid var(--lumo-contrast-10pct);
+}
+
+.main-tab {
+    padding: 0 6px 0 12px;
+    max-width: 240px;
+}
+
+.main-tab-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 关闭按钮。用 Span 而不是 Icon：少一个 frontend 依赖，视觉上也够用。 */
+.main-tab-close {
+    margin-left: 8px;
+    padding: 0 4px;
+    font-size: 15px;
+    line-height: 1;
+    border-radius: 50%;
+    color: var(--lumo-tertiary-text-color);
+    cursor: pointer;
+}
+
+.main-tab-close:hover {
+    background-color: var(--lumo-contrast-10pct);
+    color: var(--lumo-error-text-color);
+}
+
+/* min-height: 0 不能省：flex 子项默认 min-height:auto，内容一多就把容器顶开，
+   导致整个页面出现双滚动条。 */
+.main-tab-content {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 12px 16px 16px;
+    background-color: var(--lumo-base-color);
+}
+
+/* ==========================================================
+   功能页通用版式（对应 ViewBase 产出的一批 className）
+   ========================================================== */
+
+.view-base {
+    overflow: auto;
+}
+
+.view-title {
+    margin: 0;
+    font-size: var(--lumo-font-size-xl);
+    font-weight: 500;
+    color: var(--lumo-header-text-color);
+}
+
+.view-subtitle {
+    margin: 2px 0 0;
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+}
+
+.view-section-title {
+    font-size: var(--lumo-font-size-m);
+    font-weight: 500;
+    color: var(--lumo-header-text-color);
+}
+
+.view-toolbar {
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.view-spacer {
+    flex: 1 1 auto;
+}
+
+.view-divider {
+    width: 100%;
+    margin: 12px 0;
+    border: none;
+    border-top: 1px solid var(--lumo-contrast-10pct);
+}
+
+.view-fill {
+    flex: 1;
+    min-height: 0;
+}
+
+/* ---------- 表单一行的排版 ---------- */
+
+.field-row,
+.field-group {
+    flex: 0 0 auto;
+}
+
+.field-label {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+}
+
+/* ---------- 表格 ---------- */
+
+.standard-grid {
+    border: 1px solid var(--lumo-contrast-10pct);
+    border-radius: var(--lumo-border-radius-m);
+}
+
+.empty-hint {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-tertiary-text-color);
+}
+
+/* 下载链接做成一枚小小的文字按钮 */
+.download-link {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-primary-text-color);
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.download-link:hover {
+    text-decoration: underline;
+}
+
+/* ---------- 日志搜索 / 详情 ---------- */
+
+.search-status {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+}
+
+.log-detail-name {
+    max-width: 420px;
+    overflow: hidden;
+    font-size: var(--lumo-font-size-m);
+    font-weight: 500;
+    color: var(--lumo-header-text-color);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.log-detail-page {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+    white-space: nowrap;
+}
+
+/* TextArea 在 flex 纵向容器里靠 flex-grow 撑开，height:100% 会算错（它不扣除工具栏的高度） */
+.log-content {
+    min-height: 200px;
+}
+
+/* ==========================================================
+   系统概览
+   ========================================================== */
+
+.home-view {
+    overflow: auto;
+}
+
+.home-title {
+    margin: 0;
+    font-size: var(--lumo-font-size-xl);
+    font-weight: 500;
+}
+
+.home-subtitle {
+    margin: 0;
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+}
+
+.home-cards {
+    gap: 16px;
+    align-items: flex-start;
+}
+
+.home-card {
+    flex: 1 1 320px;
+    min-width: 300px;
+    max-width: 460px;
+    padding: 4px 20px 16px;
+    background-color: var(--lumo-base-color);
+    border: 1px solid var(--lumo-contrast-10pct);
+    border-radius: var(--lumo-border-radius-l);
+}
+
+.home-card-title {
+    margin: 12px 0 8px;
+    font-size: var(--lumo-font-size-m);
+    font-weight: 500;
+    color: var(--lumo-header-text-color);
+}
+
+.home-row {
+    display: flex;
+    gap: 12px;
+    padding: 5px 0;
+    font-size: var(--lumo-font-size-s);
+    border-bottom: 1px dashed var(--lumo-contrast-5pct);
+}
+
+.home-row-key {
+    flex: 0 0 96px;
+    color: var(--lumo-secondary-text-color);
+}
+
+.home-row-value {
+    flex: 1;
+    min-width: 0;
+    /* 工作目录、JDBC URL 这类长串不能把卡片撑破 */
+    word-break: break-all;
+}
+
+.home-step {
+    display: flex;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: var(--lumo-font-size-s);
+}
+
+.home-step-mark {
+    flex: 0 0 14px;
+}
+
+.home-step-done {
+    color: var(--lumo-success-text-color);
+}
+
+.home-step-todo {
+    color: var(--lumo-tertiary-text-color);
+}
+
+.home-badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: var(--lumo-font-size-xs);
+}
+
+.home-badge-ok {
+    background-color: var(--lumo-success-color-10pct);
+    color: var(--lumo-success-text-color);
+}
+
+.home-badge-warning {
+    background-color: var(--lumo-warning-color-10pct);
+    color: var(--lumo-warning-text-color);
+}
+
+.home-badge-expired,
+.home-badge-disabled {
+    background-color: var(--lumo-error-color-10pct);
+    color: var(--lumo-error-text-color);
+}
+
+/* 使用手册（原系统概览）新增的排版：正文段、圆点条目、小节标题 */
+.home-text {
+    margin: 4px 0;
+    font-size: var(--lumo-font-size-s);
+}
+
+.home-bullet {
+    display: flex;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: var(--lumo-font-size-s);
+    line-height: var(--lumo-line-height-m);
+}
+
+.home-bullet-dot {
+    flex: 0 0 10px;
+    color: var(--lumo-primary-text-color);
+    font-weight: 600;
+}
+
+.home-bullet-text {
+    flex: 1;
+    min-width: 0;
+    word-break: break-word;
+}
+
+.home-section {
+    margin: 14px 0 4px;
+    font-size: var(--lumo-font-size-s);
+    font-weight: 600;
+    color: var(--lumo-header-text-color);
+    border-bottom: 1px solid var(--lumo-contrast-10pct);
+    padding-bottom: 4px;
+}
+
+/* ==========================================================
+   本地文件管理
+   ========================================================== */
+
+/* 当前路径（兼「跳到某目录」输入框）：等宽字体让斜杠和长目录名更容易扫读 */
+.local-file-view .file-path-field input {
+    font-family: var(--lumo-font-family-monospace, monospace);
+    font-size: var(--lumo-font-size-s);
+}
+
+.local-file-view .file-name {
+    font-size: var(--lumo-font-size-s);
+}
+
+/*
+ * 行内上传控件（每行一个 vaadin-upload）。
+ * 默认它自带一圈内边距和一块拖拽区，塞进表格行里会把行撑高；
+ * 拖拽区已经用 setDropAllowed(false) 关掉了，这里再把按钮容器的大内边距压掉。
+ */
+.local-file-view .row-upload {
+    font-size: var(--lumo-font-size-s);
+}
+
+.local-file-view .row-upload::part(primary-buttons) {
+    padding: 0;
+}
+
+.local-file-view .file-hidden-toggle {
+    font-size: var(--lumo-font-size-s);
+    white-space: nowrap;
+}
+
+
+
+/* ==========================================================
+   免登录服务器列表 / Docker / Compose / 用户管理
+   ========================================================== */
+
+/* docker 连接状态行：成功与告警共用，颜色由页面内联控制 */
+.docker-env-label {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+    margin: 2px 0 6px;
+}
+
+/* 用户管理：统计卡片里的数字 */
+.um-stat-value {
+    display: block;
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--lumo-header-text-color);
+    margin-bottom: 4px;
+}
+
+/* 用户管理：用户名列（头像 + 登录名 + 姓名） */
+.um-user-cell {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.um-avatar {
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background-color: var(--lumo-primary-color-10pct);
+    color: var(--lumo-primary-text-color);
+    font-size: var(--lumo-font-size-s);
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.um-user-id {
+    font-weight: 500;
+    color: var(--lumo-header-text-color);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.um-user-name {
+    display: block;
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+}
+
+/* 有效期列：日期 + 提示两段 */
+.um-expire-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.um-expire-hint {
+    font-size: var(--lumo-font-size-xs);
+}
+
+/* ============================================================
+   表单控件 label 左置（用户要求：label 显示在输入框左侧，不在上方）。
+   背景：Lumo 的字段（text-field / combo-box / select / date-picker 等）
+   模板是 <div class="vaadin-field-container"> 包着 label、input-field、
+   error-message、helper-text，按普通块级流从上往下排，所以 label 天生在顶上。
+   field-container 在 shadow DOM 里、且没有 part，文档样式摸不到它；
+   但 label 有 part，可以绝对定位到 host 左侧，host 用 padding-left 腾出空间
+   （文档样式对 host 的优先级高于组件内部 :host 规则，可以覆盖 padding）。
+   ============================================================ */
+vaadin-text-field[has-label],
+vaadin-password-field[has-label],
+vaadin-integer-field[has-label],
+vaadin-number-field[has-label],
+vaadin-big-decimal-field[has-label],
+vaadin-combo-box[has-label],
+vaadin-multi-select-combo-box[has-label],
+vaadin-select[has-label],
+vaadin-date-picker[has-label],
+vaadin-time-picker[has-label],
+vaadin-text-area[has-label] {
+    position: relative;
+    padding-left: 118px;
+}
+
+/* label 绝对定位在左，垂直居中；宽度固定 110px + 8px 间距，长名换行 */
+vaadin-text-field[has-label]::part(label),
+vaadin-password-field[has-label]::part(label),
+vaadin-integer-field[has-label]::part(label),
+vaadin-number-field[has-label]::part(label),
+vaadin-big-decimal-field[has-label]::part(label),
+vaadin-combo-box[has-label]::part(label),
+vaadin-multi-select-combo-box[has-label]::part(label),
+vaadin-select[has-label]::part(label),
+vaadin-date-picker[has-label]::part(label),
+vaadin-time-picker[has-label]::part(label),
+vaadin-text-area[has-label]::part(label) {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 110px;
+    box-sizing: border-box;
+    padding-right: 8px;
+    /* 左对齐：右对齐会让短标签（如"端口"）左边空出一大截，
+       用户明确反馈过这一点。 */
+    text-align: left;
+    white-space: normal;
+    line-height: var(--lumo-line-height-s);
+}
+
+/* textarea 更高，label 顶部对齐更像表单排版 */
+vaadin-text-area[has-label]::part(label) {
+    top: 1.8em;
+    transform: none;
+}
+
+/* 错误提示 / helper 从 input 下移一整行时也会被 padding 推到右侧，保持原样即可 */
+
+
+/* ============================================================
+   表格「操作」列的按钮容器：小按钮之间留出可见间隔，避免误点。
+   浅色底在这里统一上（文档 host 样式优先级高于组件内 :host 规则，
+   见 UiFactory.rowAction 注释）；删除按钮走 error 主题给红底红字。
+   ============================================================ */
+.row-actions {
+    gap: 8px;
+    align-items: center;
+}
+
+.row-actions vaadin-button {
+    background-color: var(--lumo-contrast-5pct);
+    border-radius: var(--lumo-border-radius-s);
+}
+
+.row-actions vaadin-button[theme~="error"] {
+    background-color: var(--lumo-error-color-10pct);
+    color: var(--lumo-error-text-color);
+}
+
+/* 「查看状态」后的状态展示钮：运行中 → success（绿底绿字） */
+.row-actions vaadin-button[theme~="success"] {
+    background-color: var(--lumo-success-color-10pct);
+    color: var(--lumo-success-text-color);
+}
+
+/* 状态钮是禁用态（防止运行中还能点「运行中」再启动一遍），
+   但 Lumo 默认把禁用钮压到半透明，绿/红底色会发闷，这里保持原色 */
+.row-actions vaadin-button[disabled] {
+    opacity: 1;
+}

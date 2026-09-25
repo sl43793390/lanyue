@@ -112,7 +112,7 @@ public class MainView extends VerticalLayout implements TabHost {
         add(contentArea);
         // 内容区吃掉「除顶栏之外」的全部高度，配合 .main-tab-content 的 min-height:0，
         // 标签页内部的内容才会自己滚动，而不是把整个页面顶出滚动条。
-        setFlexGrow(1, contentArea);
+//        setFlexGrow(1, contentArea);
 
         // 进来先打开概览，避免主区域一片空白
         openTab(MenuRegistry.defaultItem());
@@ -128,8 +128,6 @@ public class MainView extends VerticalLayout implements TabHost {
         HorizontalLayout topBar = new HorizontalLayout();
         topBar.addClassName("main-topbar");
         topBar.setAlignItems(Alignment.CENTER);
-        topBar.setPadding(false);
-        topBar.setSpacing(false);
 
         H1 logo = new H1("揽月运维管理平台");
         logo.addClassName("main-header-logo");
@@ -205,8 +203,8 @@ public class MainView extends VerticalLayout implements TabHost {
         VerticalLayout area = new VerticalLayout();
         area.addClassName("main-content-area");
         area.setSizeFull();
-        area.setPadding(false);
-        area.setSpacing(false);
+//        area.setPadding(true);
+//        area.setSpacing(true);
         // 标签栏和内容容器都要横向铺满（FlexLayout 默认 flex-start，见构造器里的说明）
         area.setDefaultHorizontalComponentAlignment(Alignment.STRETCH);
 
