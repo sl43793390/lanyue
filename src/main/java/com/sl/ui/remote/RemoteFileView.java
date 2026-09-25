@@ -1,11 +1,13 @@
 package com.sl.ui.remote;
 
 import cn.hutool.core.util.StrUtil;
+import com.sl.config.PureTextProperties;
 import com.sl.entity.ConnectionInfo;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.LoadingOverlay;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
+import com.sl.util.CharsetDetector;
 import com.sl.util.Constants;
 import com.sl.util.SSHClientUtil;
 import com.vaadin.flow.component.AttachEvent;
@@ -18,6 +20,7 @@ import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
+import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.component.upload.Upload;
 import com.vaadin.flow.server.streams.UploadHandler;
@@ -30,6 +33,7 @@ import org.springframework.context.annotation.Scope;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -39,7 +43,10 @@ import java.util.List;
  * 远程文件管理（SFTP）。
  * <p>
  * 对应旧项目 {@code com.so.component.remote.RemoteFileMgmtComponent}：
- * 选一台机器，浏览远端目录、上传、下载、重命名、新建目录、删除。
+ * 选一台机器，浏览远端目录、上传、下载、重命名、新建目录、删除；
+ * 另有本页新增的「编辑」：纯文本、大小不超过 {@code pure.text.type.maxsize} 的文件
+ * （扩展名白名单见 {@code pure.text.type}）可以弹 textarea 在线改，保存前先探测编码，
+ * 写回用同一组 charset + BOM，保证不会改出乱码。
  * 连接与文件操作都走 {@link SSHClientUtil}（sshj）：目录列表用 SFTP {@code ls}，
  * 上传/下载/改名/建目录走 SFTP，删除目录用 {@code rm -rf}（SFTP 没有递归删除）。
  * <p>
@@ -73,6 +80,9 @@ public class RemoteFileView extends ViewBase {
     private transient ConnectionInfo presetHost;
     private transient SSHClientUtil ssh;
 
+    /** 纯文本编辑白名单（application.properties: pure.text.type / pure.text.type.maxsize） */
+    private final transient PureTextProperties pureText;
+
     private final TextField pathField = new TextField();
     private final Span statusLabel = new Span();
     private final Grid<FileRow> grid = UiFactory.grid(FileRow.class);
@@ -83,6 +93,10 @@ public class RemoteFileView extends ViewBase {
 
     public void setPresetHost(ConnectionInfo info) {
         this.presetHost = info;
+    }
+
+    public RemoteFileView(PureTextProperties pureTextProperties) {
+        this.pureText = pureTextProperties;
     }
 
     private boolean built = false;
@@ -178,6 +192,10 @@ public class RemoteFileView extends ViewBase {
         actions.setAlignItems(FlexComponent.Alignment.CENTER);
         if (!row.dir()) {
             actions.add(UiFactory.rowAction("下载", () -> download(row)));
+            // 纯文本且不超过大小上限的文件才给「编辑」入口（白名单在 application.properties）
+            if (pureText.isEditable(row.name(), row.size())) {
+                actions.add(UiFactory.rowAction("编辑", () -> openEditor(row)));
+            }
         }
         actions.add(UiFactory.rowAction("重命名", () -> promptRename(row)));
         actions.add(UiFactory.rowDanger("删除", () -> confirmDelete(row)));
@@ -358,6 +376,115 @@ public class RemoteFileView extends ViewBase {
                 downloadDialog.open();
             });
         }, "file-download-" + row.name()).start());
+    }
+
+    // ------------------------------------------------------------------
+    // 在线编辑（纯文本小文件）
+    // ------------------------------------------------------------------
+
+    /**
+     * 打开编辑器：先把远端文件拉到本地临时目录，探测编码后弹 textarea 窗口。
+     * 全程后台线程，下载成功才弹窗。
+     */
+    private void openEditor(FileRow row) {
+        if (!hasPermission(Constants.UPDATE)) {
+            Dialogs.warn("权限不足，无法编辑文件");
+            return;
+        }
+        getUI().ifPresent(ui -> new Thread(() -> {
+            File tmp = null;
+            CharsetDetector.TextSnapshot snapshot = null;
+            String failure = null;
+            try {
+                tmp = File.createTempFile("lanyue-edit-", "-" + UiFactory.safeFileName(row.name()));
+                ensureSsh().downloadFile(row.path(), tmp.getAbsolutePath());
+                snapshot = CharsetDetector.load(tmp);
+            } catch (Exception e) {
+                failure = e.getMessage();
+                log.warn("拉取待编辑文件 {} 失败：{}", row.path(), e.getMessage());
+            }
+            File finalTmp = tmp;
+            CharsetDetector.TextSnapshot finalSnapshot = snapshot;
+            String finalFailure = failure;
+            ui.access(() -> {
+                if (finalFailure != null || finalSnapshot == null) {
+                    if (finalTmp != null) {
+                        finalTmp.delete();
+                    }
+                    Dialogs.error("读取文件失败：" + StrUtil.emptyToDefault(finalFailure, "未知错误"));
+                    return;
+                }
+                showEditorDialog(row, finalTmp, finalSnapshot);
+            });
+        }, "file-edit-" + row.name()).start());
+    }
+
+    /** 编辑弹窗：textarea 显示内容，下方「放弃」和「保存」。 */
+    private void showEditorDialog(FileRow row, File tmp, CharsetDetector.TextSnapshot snapshot) {
+        Dialog dialog = new Dialog();
+        dialog.setWidth("900px");
+        dialog.setResizable(true);
+        dialog.setHeaderTitle("编辑文件：" + row.name());
+
+        TextArea area = UiFactory.textArea();
+        area.setWidthFull();
+        area.setHeight("55vh");
+        area.getStyle().set("--lumo-font-family", "Consolas, 'Courier New', monospace");
+        area.setValue(snapshot.content());
+
+        Span hint = new Span("路径：" + row.path()
+                + "　编码：" + snapshot.label()
+                + "　大小：" + humanSize(row.size()));
+        hint.addClassName("search-status");
+
+        VerticalLayout content = new VerticalLayout(hint, area);
+        content.setPadding(true);
+        content.setSpacing(false);
+        content.getStyle().set("gap", "8px");
+        dialog.add(content);
+        dialog.getFooter().add(
+                Dialogs.cancelButton(() -> {
+                    tmp.delete();
+                    dialog.close();
+                }),
+                Dialogs.primaryButton("保存", () ->
+                        saveEditedFile(row, tmp, snapshot, area.getValue(), dialog)));
+        dialog.open();
+        area.focus();
+    }
+
+    /**
+     * 保存：按打开时探测到的编码 + BOM 写回（同一组 charset，改内容不改编码，杜绝乱码），
+     * 先写本地临时文件再 SFTP 传回原路径。
+     */
+    private void saveEditedFile(FileRow row, File tmp,
+                                CharsetDetector.TextSnapshot snapshot, String content, Dialog dialog) {
+        if (!hasPermission(Constants.UPDATE)) {
+            Dialogs.warn("权限不足，无法保存文件");
+            return;
+        }
+        if (StrUtil.isBlank(content) && row.size() > 0) {
+            Dialogs.warn("内容为空；如果是想清空文件，请先确认远端有备份");
+            return;
+        }
+        File outTmp;
+        try {
+            outTmp = File.createTempFile("lanyue-edit-save-", ".tmp");
+            Files.write(outTmp.toPath(),
+                    CharsetDetector.encode(content, snapshot.charset(), snapshot.bom()));
+        } catch (IOException e) {
+            Dialogs.error("保存失败：" + e.getMessage());
+            return;
+        }
+        dialog.close();
+        runSftp("保存", () -> {
+            try {
+                ensureSsh().uploadFile(outTmp.getAbsolutePath(), row.path(), null);
+            } finally {
+                outTmp.delete();
+                tmp.delete();
+            }
+        });
     }
 
     // ------------------------------------------------------------------

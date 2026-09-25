@@ -50,7 +50,9 @@ import java.util.Set;
  *       再经 SFTP 写回，保存完询问是否立即 reload。</li>
  * </ul>
  * <p>
- * nginx 二进制探测顺序：PATH → /usr/local/nginx/sbin → /usr/local/openresty/nginx/sbin，
+ * nginx 二进制探测顺序：连接区填了「nginx目录」（包含 sbin/conf 的那个目录）就先按
+ * {@code <dir>/sbin/nginx} 与 {@code <dir>/conf/nginx.conf} 取；没填（或没找到）再回落
+ * PATH → /usr/local/nginx/sbin → /usr/local/openresty/nginx/sbin，
  * 都没有时给出「未安装」提示并禁用全部操作按钮，不发无效命令。
  * 连接区照搬容器和镜像管理的模式：下拉选机器（connection_info + remoteServerList.conf），
  * 服务器列表跳转进来时自动连接一次。
@@ -70,6 +72,8 @@ public class NginxMgmtView extends ViewBase {
 
     // ---- 连接区 ----
     private final ComboBox<ConnectionInfo> hostCombo = new ComboBox<>();
+    /** nginx 安装目录（包含 sbin/conf 的那个）。填了就只在 <dir>/sbin/nginx 与 <dir>/conf/nginx.conf 找。 */
+    private final TextField homeField = UiFactory.textField();
     private final Button connectBtn = UiFactory.primary("连接", this::connect);
     private final Span busyLabel = new Span();
     private final Span envLabel = new Span();
@@ -129,8 +133,14 @@ public class NginxMgmtView extends ViewBase {
         hostCombo.setItemLabelGenerator(item -> item.getIdHost() + " (" + item.getIdUser() + ")");
         hostCombo.setAllowCustomValue(false);
 
+        homeField.setWidth("300px");
+        homeField.setPlaceholder("留空则在默认位置探测，如 /usr/local/nginx");
+        homeField.getElement().setAttribute("title",
+                "nginx 安装目录（包含 sbin/conf 的那个目录）。填写后直接用 <目录>/sbin/nginx 与 <目录>/conf/nginx.conf");
+
         HorizontalLayout row = new HorizontalLayout(
                 UiFactory.fieldRow("目标服务器", "80px", hostCombo),
+                UiFactory.fieldRow("nginx目录", "80px", homeField),
                 connectBtn, busyLabel);
         row.setClassName("view-toolbar");
         row.setAlignItems(FlexComponent.Alignment.CENTER);
@@ -247,6 +257,11 @@ public class NginxMgmtView extends ViewBase {
             Dialogs.warn("请先选择目标服务器");
             return;
         }
+        String home = normalizeDir(homeField.getValue());
+        if ("?".equals(home)) {
+            Dialogs.warn("nginx 目录必须是目标机上的绝对路径（以 / 开头）");
+            return;
+        }
         closeSsh();
         setBusy(true, "正在连接 " + info.getIdHost() + " …");
         manageArea.setVisible(false);
@@ -254,12 +269,26 @@ public class NginxMgmtView extends ViewBase {
 
         runAsync("连接 " + info.getIdHost(), () -> {
             SSHClientUtil client = SSHClientUtil.connect(info);
-            // 连上就探测：二进制路径、版本、conf 路径、运行状态，一次往返全带回来
-            String bin = detectNginxBin(client);
+            // 探测顺序：填了 nginx 目录就先按 <dir>/sbin/nginx 找，找不到再回落默认探测
+            String bin = null;
+            String confPath = "";
+            boolean homeHit = false;
+            if (home != null) {
+                bin = probeBinAt(client, home);
+                homeHit = bin != null;
+                if (homeHit) {
+                    confPath = probeFileAt(client, home + "/conf/nginx.conf");
+                }
+            }
+            if (bin == null) {
+                bin = detectNginxBin(client);
+            }
             String version = bin == null ? "" : execQuiet(client, quote(bin) + " -v 2>&1");
-            String confPath = bin == null ? "" : parseConfPath(execQuiet(client, quote(bin) + " -V 2>&1"));
+            if (confPath.isEmpty() && bin != null) {
+                confPath = parseConfPath(execQuiet(client, quote(bin) + " -V 2>&1"));
+            }
             boolean isRunning = bin != null && checkRunning(client);
-            return new Object[]{client, bin, version, confPath, isRunning};
+            return new Object[]{client, bin, version, confPath, isRunning, homeHit};
         }, result -> {
             Object[] parts = (Object[]) result;
             ssh = (SSHClientUtil) parts[0];
@@ -267,31 +296,38 @@ public class NginxMgmtView extends ViewBase {
             String version = (String) parts[2];
             String confPath = (String) parts[3];
             boolean isRunning = (Boolean) parts[4];
+            boolean homeHit = (Boolean) parts[5];
             setBusy(false, "");
-            applyDetectResult(version, confPath, isRunning);
+            applyDetectResult(version, confPath, isRunning, homeHit);
         }, e -> {
             setBusy(false, "");
             Dialogs.error("连接失败：" + StrUtil.emptyToDefault(e.getMessage(), e.getClass().getSimpleName()));
         });
     }
 
-    private void applyDetectResult(String version, String confPath, boolean isRunning) {
+    private void applyDetectResult(String version, String confPath, boolean isRunning, boolean homeHit) {
         if (ssh == null) {
             return;
         }
+        String home = normalizeDir(homeField.getValue());
         String host = hostCombo.getValue() == null ? "" : hostCombo.getValue().getIdHost();
         if (nginxBin == null) {
             manageArea.setVisible(false);
-            envLabel.setText("已连接 " + host + "，但没有检测到 nginx"
-                    + "（已尝试 PATH、/usr/local/nginx/sbin、/usr/local/openresty/nginx/sbin）。");
+            String tried = home != null
+                    ? "已尝试指定目录 " + home + "/sbin/nginx，以及 PATH、/usr/local/nginx/sbin、/usr/local/openresty/nginx/sbin"
+                    : "已尝试 PATH、/usr/local/nginx/sbin、/usr/local/openresty/nginx/sbin";
+            envLabel.setText("已连接 " + host + "，但没有检测到 nginx（" + tried + "）。");
             Dialogs.warn("目标机没有检测到 nginx，无法管理");
             return;
         }
         manageArea.setVisible(true);
         confPathField.setValue(StrUtil.blankToDefault(confPath, "/etc/nginx/nginx.conf"));
         refreshRunningLabel(isRunning);
+        String homeNote = home == null ? ""
+                : homeHit ? "　（按指定目录 " + home + " 探测）"
+                : "　（指定目录下未找到，已回落默认探测）";
         envLabel.setText("已连接 " + host + "　nginx：" + quote(nginxBin)
-                + "　" + StrUtil.trimToEmpty(version).replaceAll("\\s+", " "));
+                + "　" + StrUtil.trimToEmpty(version).replaceAll("\\s+", " ") + homeNote);
         appendOutput("已连接 " + host + "，nginx 就绪。");
     }
 
@@ -526,6 +562,31 @@ public class NginxMgmtView extends ViewBase {
             return null;
         }
         return firstLine;
+    }
+
+    /** 指定 nginx 目录下的二进制：<dir>/sbin/nginx 存在且可执行才返回路径，否则 null。 */
+    private static String probeBinAt(SSHClientUtil client, String home) {
+        String path = home + "/sbin/nginx";
+        String out = execQuiet(client, "test -x " + quote(path) + " && echo OK || echo " + NOT_FOUND);
+        return StrUtil.trimToEmpty(out).equals("OK") ? path : null;
+    }
+
+    /** 指定 nginx 目录下的配置：<dir>/conf/nginx.conf 存在返回路径，否则空串。 */
+    private static String probeFileAt(SSHClientUtil client, String path) {
+        String out = execQuiet(client, "test -f " + quote(path) + " && echo OK || echo " + NOT_FOUND);
+        return StrUtil.trimToEmpty(out).equals("OK") ? path : "";
+    }
+
+    /** 归一化 nginx 目录输入：去掉首尾空白与结尾的 /；空白返回 null（= 未填）；非绝对路径返回哨兵 "?"。 */
+    private static String normalizeDir(String input) {
+        String dir = StrUtil.trimToEmpty(input);
+        if (dir.isEmpty()) {
+            return null;
+        }
+        while (dir.length() > 1 && dir.endsWith("/")) {
+            dir = dir.substring(0, dir.length() - 1);
+        }
+        return dir.startsWith("/") ? dir : "?";
     }
 
     /** 从 nginx -V 输出里抠 --conf-path= 的值；抠不到返回空串。 */

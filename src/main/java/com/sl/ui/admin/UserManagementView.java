@@ -105,11 +105,6 @@ public class UserManagementView extends ViewBase {
     private final transient UserDao userDao;
 
     private final Grid<User> userGrid = UiFactory.grid(User.class);
-    private final Span totalLb = new Span("0");
-    private final Span availableLb = new Span("0");
-    private final Span disabledLb = new Span("0");
-    private final Span expiredLb = new Span("0");
-
     private final TextField keywordField = UiFactory.textField();
     private final ComboBox<String> statusBox = new ComboBox<>();
     private final ComboBox<String> permissionBox = new ComboBox<>();
@@ -133,7 +128,6 @@ public class UserManagementView extends ViewBase {
         add(title("用户管理"));
         add(subtitle("维护登录账号、权限与有效期"));
 
-        add(buildStatRow());
         add(buildFilterRow());
 
         buildGrid();
@@ -143,42 +137,6 @@ public class UserManagementView extends ViewBase {
         setFlexGrow(1, fill);
 
         reloadData();
-    }
-
-    // ==================================================================
-    // 统计卡片（复用首页卡片样式；点击卡片切到对应筛选）
-    // ==================================================================
-
-    private Component buildStatRow() {
-        FlexLayout row = new FlexLayout();
-        row.addClassName("home-cards");
-        row.setFlexWrap(FlexLayout.FlexWrap.WRAP);
-        row.getStyle().set("margin-bottom", "8px");
-        row.add(statCard("用户总数", totalLb, null));
-        row.add(statCard("正常可用", availableLb, STATUS_AVAILABLE));
-        row.add(statCard("已禁用", disabledLb, STATUS_DISABLED));
-        row.add(statCard("已过期", expiredLb, STATUS_EXPIRED));
-        return row;
-    }
-
-    private Div statCard(String caption, Span valueLb, String filterValue) {
-        Div card = new Div();
-        card.addClassName("home-card");
-        valueLb.addClassName("um-stat-value");
-        Span capLb = new Span(caption);
-        capLb.addClassName("home-row-key");
-        card.add(valueLb, capLb);
-        if (filterValue != null) {
-            card.getStyle().set("cursor", "pointer");
-            card.addClickListener(e -> {
-                if (filterValue.equals(statusBox.getValue())) {
-                    statusBox.setValue(STATUS_ALL);
-                } else {
-                    statusBox.setValue(filterValue);
-                }
-            });
-        }
-        return card;
     }
 
     // ==================================================================
@@ -462,7 +420,6 @@ public class UserManagementView extends ViewBase {
         if (pageIndex > totalPages() - 1) {
             pageIndex = Math.max(0, totalPages() - 1);
         }
-        updateStat();
         renderPage();
     }
 
@@ -614,29 +571,7 @@ public class UserManagementView extends ViewBase {
         selectionLb.setText(size == 0 ? "未选择" : "已选 " + size + " 项");
     }
 
-    private void updateStat() {
-        Date now = new Date();
-        int available = 0;
-        int disabled = 0;
-        int expired = 0;
-        for (User user : allUsers) {
-            if (!user.isEnabled()) {
-                disabled++;
-            }
-            if (user.isExpiredAt(now)) {
-                expired++;
-            }
-            if (user.isAvailable()) {
-                available++;
-            }
-        }
-        totalLb.setText(String.valueOf(allUsers.size()));
-        availableLb.setText(String.valueOf(available));
-        disabledLb.setText(String.valueOf(disabled));
-        expiredLb.setText(String.valueOf(expired));
-    }
-
-    private List<User> selectedUsers() {
+      private List<User> selectedUsers() {
         return new ArrayList<>(userGrid.getSelectedItems());
     }
 

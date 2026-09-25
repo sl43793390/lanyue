@@ -69,8 +69,6 @@ import java.util.function.Supplier;
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 public class DockerMgmtView extends ViewBase {
 
-    private static final long serialVersionUID = 1L;
-
     private static final Logger log = LoggerFactory.getLogger(DockerMgmtView.class);
 
     private static final String FILTER_RUNNING = "运行中";
@@ -656,7 +654,7 @@ public class DockerMgmtView extends ViewBase {
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle("容器详情：" + c.getName());
         dialog.setWidth("1200px");
-        dialog.setHeight("700px");
+        dialog.setHeight("750px");
 
         Tabs detailTabs = new Tabs();
         Tab logsTab = new Tab("运行日志");
@@ -690,7 +688,7 @@ public class DockerMgmtView extends ViewBase {
         inspectArea.setWidthFull();
         inspectArea.setHeight("560px");
         inspectArea.getElement().getStyle().set("font-family", "var(--lumo-font-family-monospace, monospace)");
-        inspectArea.getElement().getStyle().set("font-size", "var(--lumo-font-size-xs)");
+        inspectArea.getElement().getStyle().set("font-size", "var(--lumo-font-size-m)");
         VerticalLayout inspectPage = new VerticalLayout(inspectArea);
         inspectPage.setSizeFull();
         inspectPage.setPadding(false);
