@@ -158,7 +158,8 @@ public class TomcatMgmtView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void buildGrid() {
-        grid.addColumn(TomcatInfoEntity::getTomcatId).setHeader("ID").setAutoWidth(true);
+        grid.addColumn(row -> isTemplate(row) ? "（默认模板）" : StrUtil.nullToEmpty(row.getTomcatId()))
+                .setHeader("ID").setAutoWidth(true);
         grid.addColumn(row -> StrUtil.nullToEmpty(row.getTag())).setHeader("标签").setAutoWidth(true);
         grid.addColumn(row -> StrUtil.nullToEmpty(row.getNameTomcat())).setHeader("名称").setAutoWidth(true);
         grid.addColumn(row -> StrUtil.nullToEmpty(row.getCdDescription())).setHeader("描述").setAutoWidth(true);
@@ -167,6 +168,21 @@ public class TomcatMgmtView extends ViewBase {
     }
 
     private Component buildRowActions(TomcatInfoEntity t) {
+        if (isTemplate(t)) {
+            // 默认项目模板行：只提供「复制」，复制后弹窗修改保存为新实例
+            Button copyBtn = UiFactory.rowAction("复制", () -> {
+                if (!hasPermission(Constants.ADD)) {
+                    Dialogs.warn("权限不足，无法复制实例");
+                    return;
+                }
+                new TomcatDialog(t, true).open();
+            });
+            HorizontalLayout actions = new HorizontalLayout(copyBtn);
+            actions.setSpacing(false);
+            actions.addClassName("row-actions");
+            actions.setAlignItems(FlexComponent.Alignment.CENTER);
+            return actions;
+        }
         // 行内按钮统一浅色底 + 8px 间隔（.row-actions 容器样式，与免登录服务器列表一致）
         Button startBtn = UiFactory.rowAction("启动", () -> confirmStart(t));
         Button stopBtn = UiFactory.rowAction("停止", () -> confirmStop(t));
@@ -202,8 +218,28 @@ public class TomcatMgmtView extends ViewBase {
             wrapper.like("tag", tagField.getValue().trim());
         }
         List<TomcatInfoEntity> rows = tomcatInfoMapper.selectList(wrapper);
-        grid.setItems(rows);
+        // 预置的「默认项目」模板固定显示在第一行：内存对象不落库，
+        // 所以每台主机（含远程模式）都有，也不会被搜索过滤掉
+        List<TomcatInfoEntity> display = new ArrayList<>();
+        display.add(buildDefaultTemplate());
+        display.addAll(rows);
+        grid.setItems(display);
         statusLabel.setText("共 " + rows.size() + " 个实例");
+    }
+
+    /** 预置的默认项目模板：主目录固定 /opt/tomcat，只提供「复制」，复制后修改保存为新实例。 */
+    private static TomcatInfoEntity buildDefaultTemplate() {
+        TomcatInfoEntity t = new TomcatInfoEntity();
+        t.setNameTomcat("默认Tomcat实例");
+        t.setTomcatPath("/opt/tomcat");
+        t.setTag("默认模板");
+        t.setCdDescription("预置的默认项目模板（主目录 /opt/tomcat）。点「复制」→ 弹窗修改 → 保存为你的实例。");
+        // idHost 为 null 是模板行的标记：数据库里的行 idHost 必有值
+        return t;
+    }
+
+    private boolean isTemplate(TomcatInfoEntity t) {
+        return t.getIdHost() == null;
     }
 
     // ------------------------------------------------------------------
@@ -364,17 +400,29 @@ public class TomcatMgmtView extends ViewBase {
         private final TextField descField = UiFactory.textField("描述","","500px");
 
         TomcatDialog(TomcatInfoEntity existing) {
-            setHeaderTitle(existing == null ? "添加实例" : "修改实例");
+            this(existing, false);
+        }
+
+        /**
+         * @param copyMode true = 从默认项目模板复制：预填模板内容，实例 ID 留空由用户填，
+         *                 保存走 insert 生成一条新记录，不影响模板本身。
+         */
+        TomcatDialog(TomcatInfoEntity prefill, boolean copyMode) {
+            setHeaderTitle(copyMode ? "复制默认项目" : (prefill == null ? "添加实例" : "修改实例"));
             setWidth("700px");
 
-            if (existing != null) {
-                idField.setValue(StrUtil.nullToEmpty(existing.getTomcatId()));
-                idField.setEnabled(false);
-                nameField2.setValue(StrUtil.nullToEmpty(existing.getNameTomcat()));
-                pathField.setValue(StrUtil.nullToEmpty(existing.getTomcatPath()));
-                tagField2.setValue(StrUtil.nullToEmpty(existing.getTag()));
-                webappField.setValue(StrUtil.nullToEmpty(existing.getWebappPath()));
-                descField.setValue(StrUtil.nullToEmpty(existing.getCdDescription()));
+            if (prefill != null) {
+                if (copyMode) {
+                    idField.setPlaceholder("请输入新实例ID");
+                } else {
+                    idField.setValue(StrUtil.nullToEmpty(prefill.getTomcatId()));
+                    idField.setEnabled(false);
+                }
+                nameField2.setValue(StrUtil.nullToEmpty(prefill.getNameTomcat()));
+                pathField.setValue(StrUtil.nullToEmpty(prefill.getTomcatPath()));
+                tagField2.setValue(StrUtil.nullToEmpty(prefill.getTag()));
+                webappField.setValue(StrUtil.nullToEmpty(prefill.getWebappPath()));
+                descField.setValue(StrUtil.nullToEmpty(prefill.getCdDescription()));
             }
 
             VerticalLayout form = new VerticalLayout(idField, nameField2, pathField, tagField2, webappField, descField);
@@ -384,7 +432,7 @@ public class TomcatMgmtView extends ViewBase {
             add(form);
 
             getFooter().add(Dialogs.cancelButton(this::close),
-                    Dialogs.primaryButton("保存", () -> save(existing != null)));
+                    Dialogs.primaryButton("保存", () -> save(prefill != null && !copyMode)));
         }
 
         private void save(boolean update) {

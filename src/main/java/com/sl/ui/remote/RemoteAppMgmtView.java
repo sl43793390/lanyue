@@ -83,7 +83,7 @@ public class RemoteAppMgmtView extends ViewBase {
         setDefaultHorizontalComponentAlignment(FlexComponent.Alignment.STRETCH);
 
         add(title("应用管理（" + host + "）"));
-        add(subtitle("同一台机器上的 jar 项目 / Tomcat 实例 / 通用项目集中管理，"
+        add(subtitle("同一台机器上的 jar 项目 / Tomcat 实例 / 通用项目 / nginx 集中管理，"
                 + "命令通过 SSH 远程执行，数据按 id_host=" + host + " 查询。"));
 
         tabBar.addClassName("main-tabs-bar");
@@ -108,6 +108,11 @@ public class RemoteAppMgmtView extends ViewBase {
             view.setPresetHost(presetHost);
             return view;
         });
+        addTab("nginx管理-" + host, () -> {
+            NginxMgmtView view = applicationContext.getBean(NginxMgmtView.class);
+            view.setPresetHost(presetHost);
+            return view;
+        });
 
         // 默认选中第一个：Tabs 没有子项时 setSelectedTab 会 NPE，先 add 再选
         tabBar.setSelectedTab(tabs.values().iterator().next().tab());
@@ -124,7 +129,13 @@ public class RemoteAppMgmtView extends ViewBase {
 
     private void applySelection(Tab selected) {
         for (TabEntry entry : tabs.values()) {
-            entry.content().setVisible(entry.tab() == selected);
+            boolean show = entry.tab() == selected;
+            entry.content().setVisible(show);
+            // nginx 页的 SSH 建连推迟到第一次切进来：四个子页构建即 attach，
+            // 自动连会让只想看 jar 项目的用户也背一条 SSH（见 NginxMgmtView#lazyConnect）
+            if (show && entry.content() instanceof NginxMgmtView nginx) {
+                nginx.lazyConnect();
+            }
         }
     }
 }

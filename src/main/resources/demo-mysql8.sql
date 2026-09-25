@@ -188,6 +188,25 @@ CREATE TABLE `tomcat_info` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------
+-- Table structure for script_mgmt（脚本管理，其他工具 → 脚本管理）
+--   id_script      脚本 ID，主键，取创建时刻的纳秒值（System.nanoTime()），应用生成
+--   script_name    脚本名称（卡片标题 / 搜索关键字）
+--   script_desc    脚本说明
+--   script_content 脚本内容（shell 全文）。6000 × 4 字节 ≈ 24KB（utf8mb4），
+--                  与 DbInitializer.SCRIPT_MGMT 的长度定义保持一致
+--   create_time    创建时间，字符串列 yyyy-MM-dd HH:mm:ss
+-- ----------------------------
+DROP TABLE IF EXISTS `script_mgmt`;
+CREATE TABLE `script_mgmt` (
+    `id_script`      VARCHAR(32)  NOT NULL,
+    `script_name`    VARCHAR(128) NOT NULL,
+    `script_desc`    VARCHAR(255),
+    `script_content` VARCHAR(6000),
+    `create_time`    VARCHAR(32),
+    PRIMARY KEY (`id_script`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------
 -- Table structure for app_setting（界面偏好 / 零散状态的通用 kv 表）
 --   setting_key    键，由调用方约定，例如 compose.pref.admin；主键
 --   setting_value  值，纯文本

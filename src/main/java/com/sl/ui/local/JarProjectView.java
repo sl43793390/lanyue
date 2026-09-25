@@ -153,7 +153,8 @@ public class JarProjectView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void buildGrid() {
-        grid.addColumn(ProjectList::getIdProject).setHeader("ID").setAutoWidth(true);
+        grid.addColumn(row -> isTemplate(row) ? "（默认模板）" : StrUtil.nullToEmpty(row.getIdProject()))
+                .setHeader("ID").setAutoWidth(true);
         grid.addColumn(row -> StrUtil.nullToEmpty(row.getCdTag())).setHeader("标签").setAutoWidth(true);
         grid.addColumn(row -> StrUtil.nullToEmpty(row.getNameProject())).setHeader("名称").setAutoWidth(true);
         grid.addColumn(row -> StrUtil.nullToEmpty(row.getCdDescription())).setHeader("描述").setAutoWidth(true);
@@ -162,6 +163,21 @@ public class JarProjectView extends ViewBase {
     }
 
     private Component buildRowActions(ProjectList p) {
+        if (isTemplate(p)) {
+            // 默认项目模板行：只提供「复制」，复制后弹窗修改保存为新项目
+            Button copyBtn = UiFactory.rowAction("复制", () -> {
+                if (!hasPermission(Constants.ADD)) {
+                    Dialogs.warn("权限不足，无法复制项目");
+                    return;
+                }
+                new ProjectDialog(p, true).open();
+            });
+            HorizontalLayout actions = new HorizontalLayout(copyBtn);
+            actions.setSpacing(false);
+            actions.addClassName("row-actions");
+            actions.setAlignItems(FlexComponent.Alignment.CENTER);
+            return actions;
+        }
         // 行内按钮统一浅色底 + 8px 间隔（.row-actions 容器样式，与免登录服务器列表一致）
         Button startBtn = UiFactory.rowAction("启动", () -> confirmStart(p));
         Button stopBtn = UiFactory.rowAction("停止", () -> confirmStop(p));
@@ -198,8 +214,28 @@ public class JarProjectView extends ViewBase {
             wrapper.like("cd_tag", tagField.getValue().trim());
         }
         List<ProjectList> rows = projectsMapper.selectList(wrapper);
-        grid.setItems(rows);
+        // 预置的「默认项目」模板固定显示在第一行：内存对象不落库，
+        // 所以每台主机（含远程模式）都有，也不会被搜索过滤掉
+        List<ProjectList> display = new ArrayList<>();
+        display.add(buildDefaultTemplate());
+        display.addAll(rows);
+        grid.setItems(display);
         statusLabel.setText("共 " + rows.size() + " 个项目");
+    }
+
+    /** 预置的默认项目模板：目录固定 /opt/tomcat，只提供「复制」，复制后修改保存为新项目。 */
+    private static ProjectList buildDefaultTemplate() {
+        ProjectList t = new ProjectList();
+        t.setNameProject("默认jar项目");
+        t.setCdParentPath("/opt/tomcat");
+        t.setCdTag("默认模板");
+        t.setCdDescription("预置的默认项目模板（目录 /opt/tomcat）。点「复制」→ 弹窗修改 → 保存为你的项目。");
+        // idHost 为 null 是模板行的标记：数据库里的行 idHost 必有值
+        return t;
+    }
+
+    private boolean isTemplate(ProjectList p) {
+        return p.getIdHost() == null;
     }
 
     // ------------------------------------------------------------------
@@ -456,19 +492,31 @@ public class JarProjectView extends ViewBase {
         private final TextField descField = UiFactory.textField("项目描述","","500px");
 
         ProjectDialog(ProjectList existing) {
-            setHeaderTitle(existing == null ? "添加项目" : "修改项目");
+            this(existing, false);
+        }
+
+        /**
+         * @param copyMode true = 从默认项目模板复制：预填模板内容，项目 ID 留空由用户填，
+         *                 保存走 insert 生成一条新记录，不影响模板本身。
+         */
+        ProjectDialog(ProjectList prefill, boolean copyMode) {
+            setHeaderTitle(copyMode ? "复制默认项目" : (prefill == null ? "添加项目" : "修改项目"));
             setWidth("700px");
 
-            if (existing != null) {
-                idField.setValue(StrUtil.nullToEmpty(existing.getIdProject()));
-                idField.setEnabled(false);
-                nameField2.setValue(StrUtil.nullToEmpty(existing.getNameProject()));
-                pathField.setValue(StrUtil.nullToEmpty(existing.getCdParentPath()));
-                tagField2.setValue(StrUtil.nullToEmpty(existing.getCdTag()));
-                cmdField.setValue(StrUtil.nullToEmpty(existing.getCdCommand()));
-                jvmArea.setValue(StrUtil.nullToEmpty(existing.getJvmParam()));
-                jarParamField.setValue(StrUtil.nullToEmpty(existing.getJarParam()));
-                descField.setValue(StrUtil.nullToEmpty(existing.getCdDescription()));
+            if (prefill != null) {
+                if (copyMode) {
+                    idField.setPlaceholder("请输入新项目ID");
+                } else {
+                    idField.setValue(StrUtil.nullToEmpty(prefill.getIdProject()));
+                    idField.setEnabled(false);
+                }
+                nameField2.setValue(StrUtil.nullToEmpty(prefill.getNameProject()));
+                pathField.setValue(StrUtil.nullToEmpty(prefill.getCdParentPath()));
+                tagField2.setValue(StrUtil.nullToEmpty(prefill.getCdTag()));
+                cmdField.setValue(StrUtil.nullToEmpty(prefill.getCdCommand()));
+                jvmArea.setValue(StrUtil.nullToEmpty(prefill.getJvmParam()));
+                jarParamField.setValue(StrUtil.nullToEmpty(prefill.getJarParam()));
+                descField.setValue(StrUtil.nullToEmpty(prefill.getCdDescription()));
             }
 
             VerticalLayout form = new VerticalLayout(
@@ -479,7 +527,7 @@ public class JarProjectView extends ViewBase {
             add(form);
 
             getFooter().add(Dialogs.cancelButton(this::close),
-                    Dialogs.primaryButton("保存", () -> save(existing != null)));
+                    Dialogs.primaryButton("保存", () -> save(prefill != null && !copyMode)));
         }
 
         private void save(boolean update) {

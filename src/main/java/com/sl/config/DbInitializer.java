@@ -84,6 +84,21 @@ public class DbInitializer implements ApplicationRunner {
             new String[] {"id_user"});
 
     /**
+     * 脚本管理（其他工具 → 脚本管理）。
+     * 主键 id_script 是创建时的纳秒值（应用生成、IdType.INPUT），单列主键。
+     * script_content 取 6000：utf8mb4 下约 24KB，够放一个完整的运维脚本；
+     * 再长的脚本属于个别场景，按需再调长度（补列路径会把新长度补上）。
+     */
+    private static final TableDef SCRIPT_MGMT = new TableDef("script_mgmt",
+            new Object[][] {
+                    {"id_script", 32, true},
+                    {"script_name", 128, true},
+                    {"script_desc", 255, false},
+                    {"script_content", 6000, false},
+                    {"create_time", 32, false}},
+            new String[] {"id_script"});
+
+    /**
      * 启动时逐张兜底的全部表，业务表与 demo.sql / demo-mysql8.sql 逐表逐列对应。
      * <p>
      * 改表结构时**三处同步**：这里的定义、demo.sql、demo-mysql8.sql。
@@ -155,7 +170,8 @@ public class DbInitializer implements ApplicationRunner {
                             {"webapp_path", 255, false},
                             {"tag", 64, false},
                             {"cd_description", 255, false}},
-                    new String[] {"id_host", "tomcat_id"})};
+                    new String[] {"id_host", "tomcat_id"}),
+            SCRIPT_MGMT};
 
     /** 一张表的建表定义：表名、列（{列名, 长度, 是否 NOT NULL}）、主键列。 */
     private static final class TableDef {

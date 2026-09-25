@@ -3,6 +3,7 @@ package com.sl.ui.remote;
 import cn.hutool.core.util.StrUtil;
 import com.sl.entity.ConnectionInfo;
 import com.sl.ui.component.Dialogs;
+import com.sl.ui.component.LoadingOverlay;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
 import com.sl.util.Constants;
@@ -75,6 +76,8 @@ public class RemoteFileView extends ViewBase {
     private final TextField pathField = new TextField();
     private final Span statusLabel = new Span();
     private final Grid<FileRow> grid = UiFactory.grid(FileRow.class);
+    /** 连接/读目录的等待遮罩：SSH 建连可能要 10~30 秒，没有可见反馈用户会以为功能坏了 */
+    private final LoadingOverlay loadingOverlay = new LoadingOverlay("正在建立连接，请稍候……");
     /** Grid 的列是「行数据 → 组件」的纯函数，DTO 不持 UI 字段；当前目录放这儿 */
     private String currentPath = "/";
 
@@ -118,6 +121,9 @@ public class RemoteFileView extends ViewBase {
 
         buildGrid();
         VerticalLayout fill = fill(grid);
+        // 遮罩是 position:absolute 盖满最近的 relative 祖先，这里给 fill 挂上定位
+        fill.getStyle().set("position", "relative");
+        fill.add(loadingOverlay);
         add(fill);
         setFlexGrow(1, fill);
 
@@ -199,7 +205,8 @@ public class RemoteFileView extends ViewBase {
             Dialogs.warn("请输入绝对路径（以 / 开头）");
             return;
         }
-        Dialogs.info("正在读取目录……");
+        // 等待遮罩取代以前那条一闪而过的 Notification：读目录期间整个内容区可见地"忙"着
+        loadingOverlay.show("正在读取目录 " + path + " ……");
         getUI().ifPresent(ui -> new Thread(() -> {
             List<FileRow> rows = new ArrayList<>();
             String failure = null;
@@ -222,6 +229,7 @@ public class RemoteFileView extends ViewBase {
             List<FileRow> finalRows = rows;
             String finalFailure = failure;
             ui.access(() -> {
+                loadingOverlay.hide();
                 if (finalFailure != null) {
                     Dialogs.error("读取目录失败：" + finalFailure);
                     return;
@@ -361,8 +369,9 @@ public class RemoteFileView extends ViewBase {
             Dialogs.warn("权限不足，无法重命名");
             return;
         }
-        TextField nameField = UiFactory.textField("新名称", row.name());
+        TextField nameField = UiFactory.textField("新名称", row.name(),"450px");
         Dialog dialog = new Dialog();
+        dialog.setWidth("700px");
         dialog.setHeaderTitle("重命名");
         VerticalLayout content = new VerticalLayout(nameField);
         content.setPadding(true);
@@ -393,8 +402,9 @@ public class RemoteFileView extends ViewBase {
             Dialogs.warn("权限不足，无法新建目录");
             return;
         }
-        TextField nameField = UiFactory.textField("目录名", "在 " + base + " 下创建");
+        TextField nameField = UiFactory.textField("目录名", "在 " + base + " 下创建","500px");
         Dialog dialog = new Dialog();
+        dialog.setWidth("700px");
         dialog.setHeaderTitle("新建目录");
         VerticalLayout content = new VerticalLayout(nameField);
         content.setPadding(true);

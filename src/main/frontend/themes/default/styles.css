@@ -825,3 +825,142 @@ vaadin-text-area[has-label]::part(label) {
     /* flex-grow 在 Java 侧 setFlexGrow(1, desc)，这里只负责约束不撑破 */
     flex-basis: 60px;
 }
+
+/* ============================================================
+   连接等待遮罩（SSH 终端 iframe 内部 / 远程文件管理等页面通用）。
+   SSH 建连可能要 10~30 秒，没有可见反馈用户会以为功能坏了——
+   遮罩盖在内容区上，转圈 + 一行提示文案。
+   ============================================================ */
+.loading-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background-color: var(--lumo-base-color);
+    opacity: 0.88;
+    border-radius: var(--lumo-border-radius-m);
+}
+
+.loading-overlay-text {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+}
+
+.loading-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--lumo-contrast-20pct);
+    border-top-color: var(--lumo-primary-color);
+    border-radius: 50%;
+    animation: lanyue-spin 0.8s linear infinite;
+}
+
+@keyframes lanyue-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* ============================================================
+   脚本管理：卡片视图。
+   一张卡片一个脚本：浅绿色标题条（脚本名）→ 创建时间 → 三行内容折叠，
+   底部一行右侧「⋯」弹出 复制/删除/打开 菜单。
+   ============================================================ */
+.script-card-area {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-content: flex-start;
+    width: 100%;
+}
+
+.script-card {
+    display: flex;
+    flex-direction: column;
+    width: 340px;
+    box-sizing: border-box;
+    background-color: var(--lumo-base-color);
+    border: 1px solid var(--lumo-contrast-15pct);
+    border-radius: var(--lumo-border-radius-m);
+    box-shadow: 0 1px 2px rgba(31, 41, 55, 0.05);
+    overflow: hidden;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.script-card:hover {
+    border-color: rgba(16, 185, 129, 0.55);
+    box-shadow: 0 2px 6px rgba(31, 41, 55, 0.1);
+}
+
+/* 卡片可点击的中间部位 */
+.script-card-body {
+    cursor: pointer;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+/* 标题条：浅绿色底 + 深绿字，单行截断 */
+.script-card-title {
+    box-sizing: border-box;
+    padding: 8px 12px;
+    background-color: #d4edda;
+    color: #155724;
+    font-size: var(--lumo-font-size-m);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 标题下一行：创建时间 */
+.script-card-time {
+    padding: 4px 12px 0;
+    font-size: var(--lumo-font-size-xs);
+    color: var(--lumo-tertiary-text-color);
+}
+
+/* 内容区：固定三行，超出折叠（-webkit-line-clamp） */
+.script-card-content {
+    box-sizing: border-box;
+    padding: 4px 12px 8px;
+    font-family: var(--lumo-font-family-monospace, Consolas, monospace);
+    font-size: var(--lumo-font-size-xs);
+    color: var(--lumo-secondary-text-color);
+    white-space: pre-wrap;
+    word-break: break-all;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.5;
+    min-height: calc(3 * 1.5em);
+}
+
+/* 空内容时把 min-height 撤掉，别撑出一个空白块 */
+.script-card-content:empty {
+    min-height: 0;
+}
+
+.script-card-footer {
+    flex: 0 0 auto;
+    padding: 0 8px 6px;
+}
+
+/* 三个点按钮：无边框小圆钮，悬停浅绿底 */
+.script-card-dots {
+    min-width: 30px;
+    padding: 2px 6px;
+    font-size: 16px;
+    line-height: 1;
+    letter-spacing: 1px;
+    color: var(--lumo-secondary-text-color);
+}
+
+.script-card-dots:hover {
+    background-color: #d4edda;
+    color: #155724;
+}

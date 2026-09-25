@@ -139,6 +139,74 @@
         #term .xterm-viewport::-webkit-scrollbar-thumb:hover {
             background: #5f5f5f;
         }
+
+        /* 连接等待遮罩：SSH 建连可能要 10~30 秒，盖在终端区上转圈，
+           第一帧 pty 数据到达（shell 提示符已经出来）才收掉。
+           出错时切 error 态：圈不转了，错误原文亮出来。 */
+        #conn-mask {
+            position: absolute;
+            inset: 0;
+            z-index: 10;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 14px;
+            background: rgba(28, 28, 28, 0.94);
+            transition: opacity 0.25s ease;
+        }
+
+        #conn-mask.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .conn-spinner {
+            width: 34px;
+            height: 34px;
+            border: 3px solid #4a4a4a;
+            border-top-color: #8ab4f8;
+            border-radius: 50%;
+            animation: connspin 0.8s linear infinite;
+        }
+
+        @keyframes connspin {
+            to { transform: rotate(360deg); }
+        }
+
+        #conn-mask.error .conn-spinner {
+            display: none;
+        }
+
+        #conn-text {
+            color: #cfcfcf;
+            font-size: 13px;
+        }
+
+        #conn-error {
+            display: none;
+            max-width: 80%;
+            color: #ff6b6b;
+            font-size: 13px;
+            text-align: center;
+            white-space: pre-wrap;
+        }
+
+        #conn-mask.error #conn-error {
+            display: block;
+        }
+
+        #conn-mask.error #conn-text {
+            display: none;
+        }
+
+        body.light #conn-mask {
+            background: rgba(245, 245, 245, 0.94);
+        }
+
+        body.light #conn-text {
+            color: #555;
+        }
     </style>
 </head>
 <body>
@@ -166,7 +234,13 @@
             <a id="reconnect" style="display:none" title="使用同一连接信息重新建立会话">重新连接</a>
         </span>
     </div>
-    <div id="term"></div>
+    <div id="term">
+        <div id="conn-mask">
+            <div class="conn-spinner"></div>
+            <span id="conn-text">正在建立 SSH 连接，请稍候……</span>
+            <span id="conn-error"></span>
+        </div>
+    </div>
 </div>
 
 <script src="../xterm/xterm.js"></script>
@@ -192,6 +266,39 @@
         var searchBox = document.getElementById('searchbox');
         var searchInput = document.getElementById('searchinput');
         var termHost = document.getElementById('term');
+
+        /* 连接等待遮罩：页面打开就是可见的（HTML 里直接渲染），
+         * 第一帧 pty 数据到达才收掉；中途断线/出错按需重新亮出 */
+        var connMask = document.getElementById('conn-mask');
+        var connText = document.getElementById('conn-text');
+        var connError = document.getElementById('conn-error');
+        var connSettled = false;
+
+        function showMask(text) {
+            connSettled = false;
+            connMask.classList.remove('hidden', 'error');
+            connText.textContent = text;
+        }
+
+        function hideMask() {
+            if (connSettled) {
+                return;
+            }
+            connSettled = true;
+            connMask.classList.add('hidden');
+        }
+
+        function failMask(text) {
+            if (connSettled) {
+                return; // 已进入可交互状态的中途报错，交给工具栏状态行，不再盖遮罩
+            }
+            connMask.classList.add('error');
+            connError.textContent = text;
+        }
+
+        function maskVisible() {
+            return !connSettled;
+        }
 
         var socket = null;
         /** 服务端 notice 里的错误原文，onclose 时用它代替"连接已断开"这种没信息量的话 */
@@ -380,6 +487,7 @@
             lastError = '';
             reconnectNode.style.display = 'none';
             setStatus('正在连接...');
+            showMask('正在建立 SSH 连接，请稍候……');
 
             var url;
             try {
@@ -403,6 +511,8 @@
 
             socket.onopen = function () {
                 setStatus('已连接 ' + term.cols + '×' + term.rows, true);
+                // websocket 只说明通道通了，服务端还在 JSch 建连；文案换一档继续等
+                showMask('正在登录目标服务器，请稍候……');
                 fit();
                 sendResize();
                 term.focus();
@@ -414,6 +524,8 @@
                     handleNotice(event.data);
                     return;
                 }
+                // 第一帧 pty 数据 = 远端 shell 提示符已经出来，收掉等待遮罩
+                hideMask();
                 // 字节直接交给 xterm.js 自己解码，跨 TCP 块被切断的多字节汉字由它拼接
                 term.write(new Uint8Array(event.data));
             };
@@ -422,6 +534,10 @@
                 var reason = lastError || ('连接已断开（code ' + event.code + '）');
                 setStatus(reason, false);
                 reconnectNode.style.display = 'inline';
+                if (maskVisible()) {
+                    // 连接还没成过就断了：把原因亮在遮罩上，而不是让用户对黑屏猜
+                    failMask(reason);
+                }
                 writeNotice(reason, true);
             };
 
@@ -446,6 +562,10 @@
             if (isError) {
                 lastError = text;
                 setStatus(text, false);
+                if (maskVisible()) {
+                    // 还在等连接时就收到错误（token 失效 / SSH 建连失败）：亮在遮罩上
+                    failMask(text);
+                }
             }
             writeNotice(text, isError);
         }
@@ -631,9 +751,7 @@
         reconnectNode.onclick = function () {
             term.reset();
             connect();
-        };
-
-        /* ---------------- 外观设置控件 ---------------- */
+        };        /* ---------------- 外观设置控件 ---------------- */
 
         var fontLabel = document.getElementById('fontsize');
         var themeToggle = document.getElementById('themetoggle');
