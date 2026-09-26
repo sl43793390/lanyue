@@ -940,17 +940,14 @@ public class UserManagementView extends ViewBase {
 
         ResetPasswordDialog(User user) {
             setHeaderTitle("重置密码 - " + user.getUserId());
-            setWidth("460px");
+            setWidth("560px");
             setCloseOnOutsideClick(false);
 
-            PasswordField newPwd = new PasswordField("新密码 *");
+            PasswordField newPwd = UiFactory.passwordField("新密码", "350px");
             newPwd.setPlaceholder("不少于 " + MIN_PASSWORD_LENGTH + " 位");
-            newPwd.setWidthFull();
-            PasswordField confirmPwd = new PasswordField("确认新密码 *");
+            PasswordField confirmPwd = UiFactory.passwordField("确认新密码", "350px");
             confirmPwd.setPlaceholder("再输入一次");
-            confirmPwd.setWidthFull();
-            TextField generatedField = UiFactory.textField("随机密码（点生成后可直接复制）");
-            generatedField.setWidthFull();
+            TextField generatedField = UiFactory.textField("随机密码（点生成后可直接复制）","","350px");
 
             Button genBtn = UiFactory.button("生成随机密码", () -> {
                 // 去掉容易混淆的 0/O/1/l/I，方便口头转述或手抄

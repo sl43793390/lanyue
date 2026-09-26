@@ -7,6 +7,7 @@ import com.sl.entity.LogPath;
 import com.sl.mapper.ConnectionInfoMapper;
 import com.sl.mapper.LogPathMapper;
 import com.sl.ui.component.Dialogs;
+import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
 import com.sl.util.SSHClientUtil;
@@ -15,6 +16,7 @@ import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.combobox.ComboBox;
+import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Span;
@@ -35,6 +37,9 @@ import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.LinkedHashSet;
@@ -67,6 +72,9 @@ public class RemoteLogSearchView extends ViewBase {
     private static final long serialVersionUID = 1L;
 
     private static final Logger log = LoggerFactory.getLogger(RemoteLogSearchView.class);
+
+    /** 允许在线预览的文件大小上限：10 MB。再大的日志浏览器端渲染也扛不住，引导用户下载。 */
+    private static final long PREVIEW_MAX_BYTES = 10L * 1024 * 1024;
 
     /** 一个搜索结果的展示模型 */
     public record FileRow(String name, String fullPath, String mtime, String size, long sizeBytes) {
@@ -216,6 +224,7 @@ public class RemoteLogSearchView extends ViewBase {
         grid.addColumn(FileRow::name).setHeader("文件名").setAutoWidth(true);
         grid.addColumn(FileRow::mtime).setHeader("修改日期").setAutoWidth(true);
         grid.addColumn(FileRow::size).setHeader("文件大小").setAutoWidth(true);
+        grid.addComponentColumn(this::buildPreviewCell).setHeader("预览").setAutoWidth(true);
         grid.addComponentColumn(this::buildDownloadCell).setHeader("文件下载").setAutoWidth(true);
     }
 
@@ -323,6 +332,97 @@ public class RemoteLogSearchView extends ViewBase {
                 historyCombo.setItems(historyItems);
             }
         }));
+    }
+
+    // ------------------------------------------------------------------
+    // 预览
+    // ------------------------------------------------------------------
+
+    /** 预览列：固定一个小按钮，点击后按大小规则决定直接预览还是引导下载。 */
+    private Component buildPreviewCell(FileRow row) {
+        Button btn = UiFactory.small("预览", () -> previewLog(row));
+        btn.getElement().setAttribute("title",
+                row.sizeBytes() > PREVIEW_MAX_BYTES
+                        ? "文件超过 10M，请下载后查看"
+                        : "在线预览日志内容");
+        return btn;
+    }
+
+    /**
+     * 在线预览：小于 10M 的文件先 SFTP 取到临时目录，再弹窗用统一的 CodeEditor
+     * 只读展示；超过 10M 提示下载后查看——CodeMirror 渲染十几 MB 的文本会明显卡顿，
+     * 与其让浏览器假死不如明确引导走下载。
+     */
+    private void previewLog(FileRow row) {
+        if (ssh == null) {
+            Dialogs.warn("SSH 连接已断开，请重新搜索后再预览");
+            return;
+        }
+        if (row.sizeBytes() > PREVIEW_MAX_BYTES) {
+            Dialogs.warn("「" + row.name() + "」大小 " + row.size()
+                    + "，超过 10M 无法在线预览，请先下载到本机后查看");
+            return;
+        }
+        Dialogs.info("正在取回 " + row.name() + " ……");
+        getUI().ifPresent(ui -> new Thread(() -> {
+            File local = new File(tempDir, System.currentTimeMillis() + "_preview_" + row.name());
+            try {
+                ssh.downloadFile(row.fullPath(), local.getAbsolutePath());
+                String content = readPreviewText(local);
+                ui.access(() -> openPreviewDialog(row, content, local));
+            } catch (Exception e) {
+                log.warn("预览取回远程文件 {} 失败：{}", row.fullPath(), e.getMessage());
+                //noinspection ResultOfMethodCallIgnored
+                local.delete();
+                ui.access(() -> Dialogs.error("预览失败："
+                        + StrUtil.emptyToDefault(e.getMessage(), e.getClass().getSimpleName())));
+            }
+        }, "remote-preview-" + row.name()).start());
+    }
+
+    /** 弹出 1000×500 的预览窗：CodeEditor 只读，模式按文件名推断。关闭即删临时文件。 */
+    private void openPreviewDialog(FileRow row, String content, File tempFile) {
+        Dialog dialog = new Dialog();
+        dialog.setHeaderTitle("日志预览：" + row.name() + "（" + row.size() + "）");
+        dialog.setWidth("1500px");
+        dialog.setHeight("800px");
+        dialog.setCloseOnEsc(true);
+
+        CodeEditor editor = new CodeEditor(CodeEditor.suggestMode(row.name()));
+        editor.setReadOnly(true);
+        editor.setValue(content);
+        editor.setSizeFull();
+
+        VerticalLayout box = new VerticalLayout(editor);
+        box.setPadding(false);
+        box.setSpacing(false);
+        box.setSizeFull();
+        dialog.add(box);
+
+        dialog.getFooter().add(new Span("共 " + content.length() + " 字符"));
+        dialog.getFooter().add(Dialogs.cancelButton(dialog::close));
+        // 关闭（点按钮、点叉、Esc 都算）后删临时文件，不往临时目录里攒垃圾
+        dialog.addOpenedChangeListener(e -> {
+            if (!e.isOpened()) {
+                //noinspection ResultOfMethodCallIgnored
+                tempFile.delete();
+            }
+        });
+        dialog.open();
+    }
+
+    /**
+     * 预览文本解码：先按 UTF-8 读，出现替换符（U+FFFD）再按 GBK 重试一次——
+     * 老服务器上的日志不少还是 GBK 编码，直接按 UTF-8 会读出一屏乱码。
+     */
+    private static String readPreviewText(File file) throws IOException {
+        byte[] bytes = Files.readAllBytes(file.toPath());
+        String utf8 = new String(bytes, StandardCharsets.UTF_8);
+        if (utf8.indexOf('\uFFFD') < 0) {
+            return utf8;
+        }
+        String gbk = new String(bytes, Charset.forName("GBK"));
+        return gbk.indexOf('\uFFFD') < 0 ? gbk : utf8;
     }
 
     // ------------------------------------------------------------------

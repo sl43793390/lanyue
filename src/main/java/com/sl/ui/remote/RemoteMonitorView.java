@@ -3,12 +3,14 @@ package com.sl.ui.remote;
 import cn.hutool.core.util.StrUtil;
 import com.sl.entity.ConnectionInfo;
 import com.sl.ui.component.Dialogs;
+import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
 import com.sl.util.Constants;
 import com.sl.util.SSHClientUtil;
 import com.sl.util.SshConnectionPool;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.DetachEvent;
+import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.charts.Chart;
 import com.vaadin.flow.component.charts.model.Background;
 import com.vaadin.flow.component.charts.model.BackgroundShape;
@@ -49,11 +51,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <b>Solid Gauge 仪表盘</b>（{@code ChartType.SOLIDGAUGE}）展示，弧线颜色随阈值变化
  * （&lt;50% 绿、50~80% 黄、更高红）；磁盘保持进度条逐挂载点列出。数据源与解析完全一致：
  * <ul>
- *   <li>CPU：{@code Constants.CUP_CMD}（top -bn1 取空闲百分比再算使用率）；</li>
+ *   <li>CPU：直接解析 {@code top -bn1} 输出里 Cpu(s) 行的空闲值（100 - 空闲 =
+ *       整机平均使用率，全核合计口径，与核数无关、不需要除核数）；旧的
+ *       CUP_CMD 管道只作解析失败时的兜底；</li>
  *   <li>内存：{@code free -m}，used = total - free（不含 buffers/cache，偏保守，
  *       与旧实现口径一致）；</li>
  *   <li>磁盘：{@code df -h}，逐个挂载点列出，百分比列用 {@code \s+} 切分取值。</li>
  * </ul>
+ * 进程 TOP 10 支持「按 CPU / 按内存」一键切换排序：默认 top 批模式就是 CPU 序，
+ * 内存序在服务端对最近一次采样的解析结果重排，不增加 SSH 采集次数。
  * 刷新线程是页面私有的守护线程，detach 时置停止位退出——不占公共线程池，
  * 也不留「页面关了还在跑」的僵尸循环。
  */
@@ -77,8 +83,14 @@ public class RemoteMonitorView extends ViewBase {
     private GaugeCard memCard;
     private VerticalLayout diskPanel;
     private Span refreshLabel;
-    /** 进程 TOP 10 表（top -bn1 按 %CPU 降序取前 10 行） */
+    /** 进程 TOP 10 表（top -bn1 解析后按当前排序取前 10 行） */
     private Grid<ProcRow> procGrid;
+    /** 进程排序切换按钮：点击在「按 CPU / 按内存」之间切换 */
+    private Button sortBtn;
+    /** true = 进程表按 %MEM 降序；false = 按 %CPU 降序（top 批模式的默认序） */
+    private volatile boolean sortByMem = false;
+    /** 最近一次采样结果：切换排序时不重新采集，直接重排已有数据 */
+    private volatile Sample lastSample;
 
     public void setPresetHost(ConnectionInfo info) {
         this.presetHost = info;
@@ -116,7 +128,12 @@ public class RemoteMonitorView extends ViewBase {
         refreshLabel.addClassName("search-status");
         add(refreshLabel);
 
-        add(section("进程 TOP 10（top，按 CPU 占用）"));
+        sortBtn = UiFactory.button("排序：CPU ↓", this::toggleProcSort);
+        sortBtn.getElement().setAttribute("title", "点击在「按 CPU」与「按内存」之间切换");
+        HorizontalLayout procHeader = new HorizontalLayout(section("进程 TOP 10（top）"), spacer(), sortBtn);
+        procHeader.setWidthFull();
+        procHeader.setAlignItems(FlexComponent.Alignment.CENTER);
+        add(procHeader);
         procGrid = new Grid<>();
         procGrid.addClassName("standard-grid");
         procGrid.setWidthFull();
@@ -169,9 +186,6 @@ public class RemoteMonitorView extends ViewBase {
         Sample s = new Sample();
         try {
             SSHClientUtil client = ensureSsh();
-            String cpuOut = client.executeCommand(Constants.CUP_CMD);
-            s.cpu = parsePercent(cpuOut);
-
             String freeOut = client.executeCommand("free -m");
             s.mem = parseFree(freeOut);
             s.memDetail = parseFreeDetail(freeOut);
@@ -179,8 +193,23 @@ public class RemoteMonitorView extends ViewBase {
             String dfOut = client.executeCommand("df -h");
             s.disks = parseDf(dfOut);
 
-            // 进程 TOP 10 用独立的 top -bn1：CPU 那条 CUP_CMD 是管道后的单值，复用不了
+            // top -bn1 一份输出同时喂两个指标：整机 CPU（解析 Cpu(s) 行的空闲值）
+            // 和进程列表。旧的 CUP_CMD 管道（sed/awk）在输出格式稍有出入时会把
+            // 整行透传，awk 拿 "Cpu(s):" 当数字算出 100 - 0 = 100%，页面上就
+            // 永远显示 100%——所以改成在服务端按字段解析，只认「id」前的那个数。
             String topOut = client.executeCommand("top -bn1");
+            s.cpu = parseCpuUsage(topOut);
+            if (s.cpu == null) {
+                // 个别极简系统 top 输出对不上格式时，退回旧管道兜底
+                String cpuOut = client.executeCommand(Constants.CUP_CMD);
+                s.cpu = parsePercent(cpuOut);
+            }
+            try {
+                s.cores = Integer.parseInt(client.executeCommand("nproc").trim());
+            } catch (Exception ignore) {
+                s.cores = null; // 核数仅作展示，拿不到不影响主指标
+            }
+
             s.procs = parseTopProcs(topOut);
         } catch (Exception e) {
             log.warn("采集监控数据失败：{}", e.getMessage());
@@ -190,11 +219,12 @@ public class RemoteMonitorView extends ViewBase {
     }
 
     private void apply(Sample s) {
+        lastSample = s;
         if (s.error != null) {
             refreshLabel.setText("采集失败：" + s.error);
             return;
         }
-        cpuCard.update(s.cpu, s.cpu == null ? "-" : String.format("%.1f %%", s.cpu));
+        cpuCard.update(s.cpu, s.cpu == null ? "-" : cpuDetail(s));
         if (s.mem == null) {
             memCard.update(null, "解析失败");
         } else {
@@ -212,8 +242,36 @@ public class RemoteMonitorView extends ViewBase {
                 diskPanel.add(meter.row);
             }
         }
-        procGrid.setItems(s.procs);
+        procGrid.setItems(sortedProcs(s));
         refreshLabel.setText("最近刷新：" + new java.util.Date());
+    }
+
+    /** CPU 卡片的明细文字：补上逻辑核数，说明这个百分比是「全机平均」口径。 */
+    private static String cpuDetail(Sample s) {
+        return s.cores != null && s.cores > 0
+                ? String.format("全机平均 %.1f%%（%d 逻辑核合计 100%%）", s.cpu, s.cores)
+                : String.format("%.1f %%", s.cpu);
+    }
+
+    /** 按当前排序取前 10：top 批模式默认按 %CPU 降序，内存序要在服务端重排。 */
+    private java.util.List<ProcRow> sortedProcs(Sample s) {
+        java.util.List<ProcRow> rows = new java.util.ArrayList<>(s.procs);
+        if (sortByMem) {
+            rows.sort((a, b) -> Double.compare(b.mem(), a.mem()));
+        } else {
+            rows.sort((a, b) -> Double.compare(b.cpu(), a.cpu()));
+        }
+        return rows.subList(0, Math.min(10, rows.size()));
+    }
+
+    /** 排序切换按钮：翻转排序方向，重排最近一次采样（不重新采集）。 */
+    private void toggleProcSort() {
+        sortByMem = !sortByMem;
+        sortBtn.setText(sortByMem ? "排序：内存 ↓" : "排序：CPU ↓");
+        Sample s = lastSample;
+        if (s != null && s.error == null) {
+            procGrid.setItems(sortedProcs(s));
+        }
     }
 
     /** 取共享池里的连接（懒建、复用，最后使用 10 分钟后池自动断开）。 */
@@ -228,11 +286,46 @@ public class RemoteMonitorView extends ViewBase {
     /** 一次采样的结果。字段手工赋值所以用普通类：record 不允许实例字段初始化器。 */
     private static final class Sample {
         Double cpu;
+        /** 逻辑核数（nproc），仅用于展示口径，拿得到才算 */
+        Integer cores;
         Double mem;
         String memDetail = "-";
         java.util.List<DiskMount> disks = new java.util.ArrayList<>();
         java.util.List<ProcRow> procs = new java.util.ArrayList<>();
         String error;
+    }
+
+    /**
+     * 从 top -bn1 的输出里解析整机 CPU 使用率：找到 Cpu(s) 行，
+     * 只取「id（le）」前的那个数作为空闲百分比，使用率 = 100 - 空闲。
+     * <p>
+     * 为什么不用旧的 CUP_CMD 管道做主路径：那条 sed/awk 在 top 输出格式或
+     * locale 有出入时会把整行原样透传，awk 把 "Cpu(s):" 当数字（0），
+     * 算出 100 - 0 = 100%——这就是页面上 CPU 一直 100% 的根因。
+     * 这里按字段锚定解析，两种常见格式都认：
+     * {@code Cpu(s):  0.7 us, ..., 98.9 id, ...} 与
+     * {@code Cpu(s): 0.7% us, ..., 98.9% id, ...}。
+     * top 的 Cpu(s) 本身就是全核平均（各核加总后归一到 100%），
+     * 所以 100 - id 就是整机使用率，不需要再除以核数。
+     */
+    private static Double parseCpuUsage(String topOut) {
+        if (StrUtil.isBlank(topOut)) {
+            return null;
+        }
+        for (String line : topOut.split("\r?\n")) {
+            String trimmed = line.trim();
+            // 只认 Cpu(s) / %Cpu(s) 那一行，避免进程命令行里恰好出现 "id" 误命中
+            if (!trimmed.contains("Cpu") || !trimmed.contains("(")) {
+                continue;
+            }
+            java.util.regex.Matcher m = java.util.regex.Pattern
+                    .compile("(\\d+(?:\\.\\d+)?)\\s*%?\\s*id(?:,|\\s|$)").matcher(trimmed);
+            if (m.find()) {
+                double idle = Double.parseDouble(m.group(1));
+                return Math.max(0, Math.min(100, 100 - idle));
+            }
+        }
+        return null;
     }
 
     /** top -bn1 的输出是「空闲百分比」，使用率 = 100 - 空闲。 */
@@ -292,12 +385,15 @@ public class RemoteMonitorView extends ViewBase {
     }
 
     /**
-     * 解析 top -bn1 输出，取 CPU 占用最高的前 10 个进程。
+     * 解析 top -bn1 输出，取进程行（最多 50 行，够两套排序各取前 10）。
      * <p>
      * 进程行紧跟在表头（含 {@code %CPU} 的那行）之后，遇到空行即结束。
      * 列间距不保证单空格，按 {@code \s+} 切分后从行尾倒数取 %CPU / %MEM——
      * 命令名本身可能含空格（如 {@code postgres: writer}），从行首取固定列会漂移，
      * 而 PID/USER 永远在行首前两列。命令名由第 12 列起原样拼接。
+     * <p>
+     * 行数上限从 10 放宽到 50：排序切换到「按内存」时 top 批模式的默认
+     * CPU 序不适用，需要服务端拿更多行重排后再取前 10。
      */
     private static java.util.List<ProcRow> parseTopProcs(String out) {
         java.util.List<ProcRow> list = new java.util.ArrayList<>();
@@ -332,7 +428,7 @@ public class RemoteMonitorView extends ViewBase {
             } catch (NumberFormatException e) {
                 log.debug("top 进程行解析失败：{}", trimmed);
             }
-            if (list.size() >= 10) {
+            if (list.size() >= 50) {
                 break;
             }
         }

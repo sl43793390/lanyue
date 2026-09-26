@@ -12,6 +12,7 @@ import com.sl.ui.remote.RemoteLogSearchView;
 import com.sl.ui.remote.RemoteServerListView;
 import com.sl.ui.tool.EncryptionView;
 import com.sl.ui.tool.ScriptMgmtView;
+import com.sl.ui.tool.ScriptMonitorView;
 import com.sl.util.Constants;
 import com.vaadin.flow.component.Component;
 
@@ -78,7 +79,8 @@ public final class MenuRegistry {
 
             new Group("其他工具", List.of(
                     new Item("加密工具", EncryptionView.class, null),
-                    new Item("脚本管理", ScriptMgmtView.class, Constants.UPDATE))),
+                    new Item("脚本管理", ScriptMgmtView.class, Constants.UPDATE),
+                    new Item("自定义脚本监控", ScriptMonitorView.class, Constants.QUERY))),
 
             new Group("用户管理", List.of(
                     new Item("用户管理", UserManagementView.class, Constants.ADD))));

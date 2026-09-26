@@ -339,8 +339,9 @@ public class RemoteServerListView extends ViewBase {
         Button sshBtn = UiFactory.button("SSH 终端", () -> openSshTerminal(info));
         Button fileBtn = UiFactory.button("文件管理", () -> openFileMgmt(info));
         Button monitorBtn = UiFactory.rowAction("指标监控", () -> openMonitor(info));
+        Button moveBtn = UiFactory.rowAction("移动", () -> showMoveDialog(row));
 
-        HorizontalLayout actions = new HorizontalLayout(dockerBtn, composeBtn, appBtn, sshBtn, fileBtn, monitorBtn);
+        HorizontalLayout actions = new HorizontalLayout(dockerBtn, composeBtn, appBtn, sshBtn, fileBtn, monitorBtn, moveBtn);
         actions.setWidth("50%");
         actions.addClassName("row-actions");
         actions.setSpacing(false);
@@ -428,6 +429,83 @@ public class RemoteServerListView extends ViewBase {
             view.setPresetHost(info);
             return view;
         });
+    }
+
+    // ------------------------------------------------------------------
+    // 移动分组
+    // ------------------------------------------------------------------
+
+    /**
+     * 「移动」弹窗：把一台机器改到其它分组。
+     * <p>
+     * 只有数据库来源的机器可移动（cd_group 列可写）；remoteServerList.conf
+     * 来源的机器界面写不了分组，展示时固定归默认分组，移动无从持久化。
+     * 选「默认分组」时把 cd_group 置 NULL——与展示规则一致（空白即默认分组）。
+     */
+    private void showMoveDialog(ServerRow row) {
+        if (!row.fromDb()) {
+            Dialogs.warn("该机器来自 remoteServerList.conf 配置文件，分组固定为「默认分组」，无法在线移动");
+            return;
+        }
+        if (!hasPermission(Constants.UPDATE)) {
+            Dialogs.warn("权限不足，无法移动服务器分组");
+            return;
+        }
+        ConnectionInfo info = row.info();
+        String currentGroup = groupOf(row);
+
+        Dialog dialog = new Dialog();
+        dialog.setHeaderTitle("移动服务器分组");
+        dialog.setWidth("620px");
+        dialog.setCloseOnEsc(true);
+
+        Span tip = new Span("将 " + info.getIdHost() + "（用户 " + info.getIdUser() + "）从「"
+                + currentGroup + "」移动到：");
+        ComboBox<String> groupField = new ComboBox<>("目标分组");
+        groupField.setItems(groupNames);
+        groupField.setValue(currentGroup);
+        groupField.setWidth("500px");
+
+        VerticalLayout form = new VerticalLayout(tip, groupField);
+        form.setPadding(false);
+        form.setSpacing(false);
+        form.getStyle().set("gap", "10px");
+        dialog.add(form);
+
+        Button cancel = Dialogs.cancelButton(dialog::close);
+        Button save = Dialogs.primaryButton("移动", () -> {
+            String target = groupField.getValue();
+            if (StrUtil.isBlank(target)) {
+                Dialogs.warn("请选择目标分组");
+                return;
+            }
+            if (target.equals(currentGroup)) {
+                Dialogs.info("该机器已经在「" + target + "」里了");
+                return;
+            }
+            try {
+                // 复合主键三列全部对上，只按 host 更新会波及同 IP 不同端口的机器
+                com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<ConnectionInfo> update =
+                        new com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper<>();
+                update.eq("id_host", info.getIdHost())
+                        .eq("cd_port", info.getCdPort())
+                        .eq("id_user", info.getIdUser())
+                        .set("cd_group", DEFAULT_GROUP.equals(target) ? null : target);
+                int updated = connectionInfoMapper.update(null, update);
+                dialog.close();
+                reload();
+                if (updated > 0) {
+                    Dialogs.success("已将 " + info.getIdHost() + " 移动到「" + target + "」");
+                } else {
+                    Dialogs.warn("移动失败，记录可能已被其他人修改");
+                }
+            } catch (Exception e) {
+                log.warn("移动服务器 {} 到分组 {} 失败：{}", info.getIdHost(), target, e.getMessage());
+                Dialogs.error("移动失败：" + StrUtil.emptyToDefault(e.getMessage(), e.getClass().getSimpleName()));
+            }
+        });
+        dialog.getFooter().add(Dialogs.dialogActions(cancel, save));
+        dialog.open();
     }
 
     // ------------------------------------------------------------------
