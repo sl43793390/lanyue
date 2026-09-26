@@ -492,11 +492,11 @@ public class JarProjectView extends ViewBase {
         private final TextField idField = UiFactory.textField("项目ID", "如 order-service","500px");
         private final TextField nameField2 = UiFactory.textField("项目名称", "jar/war 包名称：xxx.jar","500px");
         private final TextField pathField = UiFactory.textField("项目所在路径", "不含 jar 包名称","500px");
-        private final TextField tagField2 = UiFactory.textField("项目tag", "用于对项目进行分类","500px");
+        private final TextField tagField2 = UiFactory.textField("项目tag", "用于对项目进行分类，可为空","500px");
         private final TextField cmdField = UiFactory.textField("启动命令", "自定义启动命令，可为空","500px");
         private final TextArea jvmArea = UiFactory.textArea("JVM参数","500px");
-        private final TextField jarParamField = UiFactory.textField("jar包参数", "跟在 jar 包名后面的参数","500px");
-        private final TextField descField = UiFactory.textField("项目描述","","500px");
+        private final TextField jarParamField = UiFactory.textField("jar包参数", "跟在 jar 包名后面的参数，可为空","500px");
+        private final TextField descField = UiFactory.textField("项目描述，可为空","","500px");
 
         ProjectDialog(ProjectList existing) {
             this(existing, false);
@@ -517,6 +517,9 @@ public class JarProjectView extends ViewBase {
                     idField.setValue(StrUtil.nullToEmpty(prefill.getIdProject()));
                     idField.setEnabled(false);
                 }
+                idField.setRequired(true);
+                nameField2.setRequired(true);
+                pathField.setRequired(true);
                 nameField2.setValue(StrUtil.nullToEmpty(prefill.getNameProject()));
                 pathField.setValue(StrUtil.nullToEmpty(prefill.getCdParentPath()));
                 tagField2.setValue(StrUtil.nullToEmpty(prefill.getCdTag()));

@@ -7,6 +7,7 @@ import com.sl.docker.ComposeTemplates;
 import com.sl.docker.model.ComposeProject;
 import com.sl.docker.model.ComposeTemplate;
 import com.sl.ui.component.Dialogs;
+import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.UiFactory;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.combobox.ComboBox;
@@ -60,7 +61,7 @@ class ComposeCreateDialog extends Dialog {
     private final ComboBox<String> sourceCombo = new ComboBox<>("起手方式");
     private final ComboBox<String> templateCombo = new ComboBox<>("模板");
     private final ComboBox<String> fileCombo = new ComboBox<>("文件");
-    private final TextArea editor = UiFactory.textArea("内容");
+    private final CodeEditor editor = new CodeEditor(CodeEditor.MODE_YAML);
     private final TextArea envArea = UiFactory.textArea(".env 变量");
 
     /** 各文件的草稿：切文件前先落回这里，避免服务端没收到最后一次输入 */
@@ -121,7 +122,9 @@ class ComposeCreateDialog extends Dialog {
             if (name == null || name.isBlank()) {
                 return;
             }
-            // 不认识的项（含「＋ 新增文件…」）按空内容处理，等于清空编辑器起名
+            // 不认识的项（含「＋ 新增文件…」）按空内容处理，等于清空编辑器起名；
+            // 语法模式跟着文件名走（yml → yaml，.sh → shell，其余按扩展名推断）
+            editor.setMode(CodeEditor.suggestMode(name));
             String content = drafts.get(name);
             editor.setValue(content == null ? "" : content);
         });
@@ -131,9 +134,8 @@ class ComposeCreateDialog extends Dialog {
         /*
          * 编辑器只靠 flex-grow 撑高度：height:100% 在 flex 纵向容器里不扣兄弟行的高度，
          * 会把 .env 一行顶出弹窗可视区（LogDetailView 里同一个坑）。
+         * CodeEditor 的 host 是 display:block + min-height:0，flex-grow 撑高同样成立。
          */
-        editor.getElement().getStyle().set("font-family", "var(--lumo-font-family-monospace, monospace)");
-        editor.getElement().getStyle().set("font-size", "var(--lumo-font-size-xs)");
         editor.addValueChangeListener(e -> {
             String name = fileCombo.getValue();
             if (name != null && !name.isBlank() && !ADD_FILE.equals(name)) {
@@ -142,7 +144,7 @@ class ComposeCreateDialog extends Dialog {
         });
 
         Button removeFileBtn = UiFactory.button("删除当前文件", this::removeCurrentFile);
-        HorizontalLayout fileRow = new HorizontalLayout(fileCombo, removeFileBtn);
+        HorizontalLayout fileRow = UiFactory.group(fileCombo, removeFileBtn);
         fileRow.setAlignItems(FlexComponent.Alignment.CENTER);
 
         envArea.setHeight("120px");
@@ -152,6 +154,7 @@ class ComposeCreateDialog extends Dialog {
         VerticalLayout body = new VerticalLayout(nameField, descField, sourceRow, fileRow, editor, envArea);
         body.setSizeFull();
         body.setPadding(false);
+        body.setSpacing(false);
         // FlexLayout 默认 align-items 是 flex-start（不是 stretch），不显式声明的话
         // 整个弹窗内容按各自内容宽收缩、缩在左边；stretch 还顺带解决了
         // 「铺满整行不写 width:100%」的溢出问题（见构造器开头的注释）。
@@ -251,7 +254,8 @@ class ComposeCreateDialog extends Dialog {
         if (!java.util.Objects.equals(fileCombo.getValue(), select)) {
             fileCombo.setValue(select);
         }
-        // 值相同时 setValue 不发事件，编辑器内容也要跟上草稿
+        // 值相同时 setValue 不发事件，编辑器内容也要跟上草稿（语法模式一并同步）
+        editor.setMode(CodeEditor.suggestMode(select));
         String content = drafts.get(select);
         editor.setValue(content == null ? "" : content);
     }

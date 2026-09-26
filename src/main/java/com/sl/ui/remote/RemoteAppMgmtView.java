@@ -83,8 +83,8 @@ public class RemoteAppMgmtView extends ViewBase {
         setDefaultHorizontalComponentAlignment(FlexComponent.Alignment.STRETCH);
 
         add(title("应用管理（" + host + "）"));
-        add(subtitle("同一台机器上的 jar 项目 / Tomcat 实例 / 通用项目 / nginx 集中管理，"
-                + "命令通过 SSH 远程执行，数据按 id_host=" + host + " 查询。"));
+//        add(subtitle("同一台机器上的 jar 项目 / Tomcat 实例 / 通用项目 / nginx 集中管理，"
+//                + "命令通过 SSH 远程执行，数据按 id_host=" + host + " 查询。"));
 
         tabBar.addClassName("main-tabs-bar");
         tabBar.addSelectedChangeListener(e -> applySelection(e.getSelectedTab()));

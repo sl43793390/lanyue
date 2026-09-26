@@ -22,7 +22,7 @@ import java.time.Clock;
  * 症状就是「点了没反应，切个标签提示才冒出来」。
  */
 @Push
-//@JsModule("@vaadin/vaadin-lumo-styles/presets/compact.js")//压缩模式
+@JsModule("@vaadin/vaadin-lumo-styles/presets/compact.js")//压缩模式
 public class Application implements AppShellConfigurator {
 
     @Bean

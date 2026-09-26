@@ -10,6 +10,7 @@ import com.sl.docker.model.DockerDaemonStatus;
 import com.sl.docker.model.DockerImage;
 import com.sl.entity.ConnectionInfo;
 import com.sl.mapper.ConnectionInfoMapper;
+import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
@@ -654,7 +655,7 @@ public class DockerMgmtView extends ViewBase {
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle("容器详情：" + c.getName());
         dialog.setWidth("1200px");
-        dialog.setHeight("750px");
+        dialog.setHeight("785px");
 
         Tabs detailTabs = new Tabs();
         Tab logsTab = new Tab("运行日志");
@@ -848,20 +849,19 @@ public class DockerMgmtView extends ViewBase {
 
         Span cmdLabel = new Span("创建命令（完整的 docker run / docker create 命令）");
         cmdLabel.addClassName("view-section-title");
-        TextArea commandArea = new TextArea();
-        commandArea.setWidthFull();
-        commandArea.setHeight("565px");
-        commandArea.setPlaceholder("docker run -d --name my-nginx -p 8080:80 nginx:1.25");
+        CodeEditor commandEditor = new CodeEditor(CodeEditor.MODE_SHELL);
+        commandEditor.setWidthFull();
+        commandEditor.setHeight("565px");
         Span hint = new Span("只执行 docker run / create；从文档复制来的 sudo 前缀、\\ 续行、$ 提示符会自动处理。");
         hint.addClassName("view-subtitle");
 
-        VerticalLayout body = new VerticalLayout(imageRow, cmdLabel, commandArea, hint);
+        VerticalLayout body = new VerticalLayout(imageRow, cmdLabel, commandEditor, hint);
         body.setPadding(false);
         dialog.add(body);
 
         Button cancel = UiFactory.button("取消", dialog::close);
         Button create = UiFactory.primary("创建容器", () -> {
-            String command = commandArea.getValue();
+            String command = commandEditor.getValue();
             if (StrUtil.isBlank(command)) {
                 Dialogs.warn("请先粘贴 docker run 命令");
                 return;

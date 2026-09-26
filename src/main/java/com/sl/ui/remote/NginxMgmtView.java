@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sl.entity.ConnectionInfo;
 import com.sl.mapper.ConnectionInfoMapper;
 import com.sl.ui.component.Dialogs;
+import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
 import com.sl.util.Constants;
@@ -99,7 +100,7 @@ public class NginxMgmtView extends ViewBase {
     private final Button loadConfBtn = UiFactory.button("读取配置", this::loadConfig);
     private final Button saveConfBtn = UiFactory.button("保存配置", () -> saveConfig(true));
 
-    private final TextArea configArea = UiFactory.textArea();
+    private final CodeEditor configEditor = new CodeEditor(CodeEditor.MODE_NGINX);
     private final TextArea outputArea = UiFactory.textArea();
 
     /** 探测到的 nginx 可执行文件路径；null = 未探测到 */
@@ -359,17 +360,16 @@ public class NginxMgmtView extends ViewBase {
         confRow.setSpacing(true);
         confRow.setAlignItems(FlexComponent.Alignment.CENTER);
 
-        configArea.setHeight("500px");
-        configArea.setWidth("99%");
-        configArea.getStyle().set("--lumo-font-family", "Consolas, 'Courier New', monospace");
-        configArea.setVisible(false);
+        configEditor.setHeight("500px");
+        configEditor.setWidth("99%");
+        configEditor.setVisible(false);
 
         outputArea.setReadOnly(true);
         outputArea.setHeight("160px");
         outputArea.setWidthFull();
         outputArea.getStyle().set("--lumo-font-family", "Consolas, 'Courier New', monospace");
 
-        manageArea.add(opRow, confRow, configArea, outputArea);
+        manageArea.add(opRow, confRow, configEditor, outputArea);
         manageArea.setSpacing(false);
         manageArea.getStyle().set("gap", "10px");
     }
@@ -474,12 +474,12 @@ public class NginxMgmtView extends ViewBase {
             setBusy(false, "");
             String text = (String) output;
             if (StrUtil.trimToEmpty(text).startsWith("cat:")) {
-                configArea.setVisible(false);
+                configEditor.setVisible(false);
                 Dialogs.error("读取失败：" + StrUtil.trimToEmpty(text));
                 return;
             }
-            configArea.setVisible(true);
-            configArea.setValue(StrUtil.trimToEmpty(text));
+            configEditor.setVisible(true);
+            configEditor.setValue(StrUtil.trimToEmpty(text));
             appendOutput("$ cat " + path + "\n（已读出 " + text.length() + " 字符，可在上方编辑）");
             Dialogs.success("配置已读取，编辑后点「保存配置」写回");
         }, e -> {
@@ -507,11 +507,11 @@ public class NginxMgmtView extends ViewBase {
             Dialogs.warn("请填写配置文件的绝对路径（以 / 开头）");
             return;
         }
-        if (configArea.isVisible() && StrUtil.isBlank(configArea.getValue())) {
+        if (configEditor.isVisible() && StrUtil.isBlank(configEditor.getValue())) {
             Dialogs.warn("配置内容为空；如果是想清空文件，请先确认远端备份可用");
             return;
         }
-        String content = configArea.isVisible() ? configArea.getValue() : "";
+        String content = configEditor.isVisible() ? configEditor.getValue() : "";
         Dialogs.confirm("保存配置",
                 "将把编辑后的内容写回 " + hostLabel() + ":" + path + "。\n"
                         + "写回前会在远端先备份为 " + path + ".bak-时间戳。确认保存吗？",

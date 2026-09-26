@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.sl.entity.ScriptInfoEntity;
 import com.sl.mapper.ScriptInfoMapper;
 import com.sl.ui.component.Dialogs;
+import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
 import com.sl.util.Constants;
@@ -200,7 +201,7 @@ public class ScriptMgmtView extends ViewBase {
     private void openViewDialog(ScriptInfoEntity script) {
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle("脚本详情：" + StrUtil.nullToDefault(script.getScriptName(), "-"));
-        dialog.setWidth("720px");
+        dialog.setWidth("800px");
 
         TextField idView = UiFactory.textField("脚本ID", "", "520px");
         idView.setValue(StrUtil.nullToEmpty(script.getIdScript()));
@@ -268,7 +269,7 @@ public class ScriptMgmtView extends ViewBase {
 
         private final TextField nameField = UiFactory.textField("脚本名称", "卡片标题与搜索关键字", "520px");
         private final TextField descField = UiFactory.textField("脚本说明", "这个脚本是干什么的", "520px");
-        private final TextArea contentField = UiFactory.textArea("脚本内容", "640px");
+        private final CodeEditor contentField = new CodeEditor(CodeEditor.MODE_SHELL);
 
         /**
          * @param source 非 null 表示从这条脚本复制：预填名称（加 - 副本）、说明、内容，
@@ -276,10 +277,10 @@ public class ScriptMgmtView extends ViewBase {
          */
         ScriptEditDialog(ScriptInfoEntity source) {
             setHeaderTitle(source == null ? "新建脚本" : "复制脚本");
-            setWidth("760px");
+            setWidth("680px");
 
             contentField.setHeight("320px");
-            contentField.getStyle().set("--lumo-font-family", "Consolas, 'Courier New', monospace");
+            contentField.setWidth("640px");
 
             if (source != null) {
                 nameField.setValue(StrUtil.nullToDefault(source.getScriptName(), "") + "-副本");
@@ -287,7 +288,9 @@ public class ScriptMgmtView extends ViewBase {
                 contentField.setValue(StrUtil.nullToEmpty(source.getScriptContent()));
             }
 
-            VerticalLayout form = new VerticalLayout(nameField, descField, contentField);
+            Span contentLabel = new Span("脚本内容");
+            contentLabel.addClassName("view-section-title");
+            VerticalLayout form = new VerticalLayout(nameField, descField, contentLabel, contentField);
             form.setPadding(false);
             form.setSpacing(false);
             form.getStyle().set("gap", "10px");

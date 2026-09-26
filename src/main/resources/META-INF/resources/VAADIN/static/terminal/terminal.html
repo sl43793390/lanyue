@@ -180,14 +180,14 @@
 
         #conn-text {
             color: #cfcfcf;
-            font-size: 13px;
+            font-size: 15px;
         }
 
         #conn-error {
             display: none;
             max-width: 80%;
             color: #ff6b6b;
-            font-size: 13px;
+            font-size: 15px;
             text-align: center;
             white-space: pre-wrap;
         }
@@ -222,9 +222,9 @@
         <span class="spacer"></span>
         <span id="appearance" title="终端外观设置（随浏览器记住）">
             <a id="fontminus" title="减小字号">A－</a>
-            <span id="fontsize">13</span>
+            <span id="fontsize">15</span>
             <a id="fontplus" title="增大字号">A＋</a>
-            <a id="fontreset" title="恢复默认字号 13">重置</a>
+            <a id="fontreset" title="恢复默认字号 15">重置</a>
             <a id="themetoggle" title="切换深色 / 浅色主题">浅色</a>
         </span>
         <span id="actions">
@@ -330,7 +330,7 @@
         /* ---------------- 外观设置（字号 / 主题） ----------------
          * 保存在浏览器 localStorage 里，按页面（同源共享）记住；
          * 字号变化会改变 cols/rows，必须同时发 resize 给服务端，否则 vim/top 错位。 */
-        var DEFAULT_FONT_SIZE = 13;
+        var DEFAULT_FONT_SIZE = 15;
         var MIN_FONT_SIZE = 9;
         var MAX_FONT_SIZE = 30;
         var DARK_THEME = {

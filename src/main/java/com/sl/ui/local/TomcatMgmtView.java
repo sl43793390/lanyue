@@ -420,6 +420,8 @@ public class TomcatMgmtView extends ViewBase {
                     idField.setValue(StrUtil.nullToEmpty(prefill.getTomcatId()));
                     idField.setEnabled(false);
                 }
+                idField.setRequired(true);
+                pathField.setRequired(true);
                 nameField2.setValue(StrUtil.nullToEmpty(prefill.getNameTomcat()));
                 pathField.setValue(StrUtil.nullToEmpty(prefill.getTomcatPath()));
                 tagField2.setValue(StrUtil.nullToEmpty(prefill.getTag()));

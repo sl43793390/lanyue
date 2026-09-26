@@ -24,6 +24,7 @@ import com.vaadin.flow.component.charts.model.Stop;
 import com.vaadin.flow.component.charts.model.VerticalAlign;
 import com.vaadin.flow.component.charts.model.YAxis;
 import com.vaadin.flow.component.charts.model.style.SolidColor;
+import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Paragraph;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
@@ -76,6 +77,8 @@ public class RemoteMonitorView extends ViewBase {
     private GaugeCard memCard;
     private VerticalLayout diskPanel;
     private Span refreshLabel;
+    /** 进程 TOP 10 表（top -bn1 按 %CPU 降序取前 10 行） */
+    private Grid<ProcRow> procGrid;
 
     public void setPresetHost(ConnectionInfo info) {
         this.presetHost = info;
@@ -92,7 +95,7 @@ public class RemoteMonitorView extends ViewBase {
         }
         String host = presetHost.getIdHost();
         add(title("指标监控（" + host + "）"));
-        add(subtitle("CPU / 内存 / 磁盘使用率，每 " + (REFRESH_INTERVAL_MS / 1000) + " 秒自动刷新"
+        add(subtitle("CPU / 内存 / 磁盘使用率与进程 TOP 10，每 " + (REFRESH_INTERVAL_MS / 1000) + " 秒自动刷新"
                 + "（数据经 SSH 执行 top / free / df 获取）。"));
 
         cpuCard = new GaugeCard("CPU");
@@ -112,6 +115,18 @@ public class RemoteMonitorView extends ViewBase {
         refreshLabel = new Span("尚未获取数据");
         refreshLabel.addClassName("search-status");
         add(refreshLabel);
+
+        add(section("进程 TOP 10（top，按 CPU 占用）"));
+        procGrid = new Grid<>();
+        procGrid.addClassName("standard-grid");
+        procGrid.setWidthFull();
+        procGrid.setHeight("330px");
+        procGrid.addColumn(ProcRow::pid).setHeader("PID").setAutoWidth(true);
+        procGrid.addColumn(ProcRow::user).setHeader("用户").setAutoWidth(true);
+        procGrid.addColumn(r -> String.format("%.1f%%", r.cpu())).setHeader("CPU").setAutoWidth(true);
+        procGrid.addColumn(r -> String.format("%.1f%%", r.mem())).setHeader("内存").setAutoWidth(true);
+        procGrid.addColumn(ProcRow::command).setHeader("命令").setAutoWidth(true).setFlexGrow(1);
+        add(procGrid);
 
         startRefreshLoop();
     }
@@ -163,6 +178,10 @@ public class RemoteMonitorView extends ViewBase {
 
             String dfOut = client.executeCommand("df -h");
             s.disks = parseDf(dfOut);
+
+            // 进程 TOP 10 用独立的 top -bn1：CPU 那条 CUP_CMD 是管道后的单值，复用不了
+            String topOut = client.executeCommand("top -bn1");
+            s.procs = parseTopProcs(topOut);
         } catch (Exception e) {
             log.warn("采集监控数据失败：{}", e.getMessage());
             s.error = e.getMessage();
@@ -193,6 +212,7 @@ public class RemoteMonitorView extends ViewBase {
                 diskPanel.add(meter.row);
             }
         }
+        procGrid.setItems(s.procs);
         refreshLabel.setText("最近刷新：" + new java.util.Date());
     }
 
@@ -211,6 +231,7 @@ public class RemoteMonitorView extends ViewBase {
         Double mem;
         String memDetail = "-";
         java.util.List<DiskMount> disks = new java.util.ArrayList<>();
+        java.util.List<ProcRow> procs = new java.util.ArrayList<>();
         String error;
     }
 
@@ -264,6 +285,58 @@ public class RemoteMonitorView extends ViewBase {
             }
         }
         return null;
+    }
+
+    /** top -bn1 的一行进程数据（top 非交互批模式默认按 %CPU 降序，前 10 行就是 CPU 大户）。 */
+    private record ProcRow(String pid, String user, double cpu, double mem, String command) {
+    }
+
+    /**
+     * 解析 top -bn1 输出，取 CPU 占用最高的前 10 个进程。
+     * <p>
+     * 进程行紧跟在表头（含 {@code %CPU} 的那行）之后，遇到空行即结束。
+     * 列间距不保证单空格，按 {@code \s+} 切分后从行尾倒数取 %CPU / %MEM——
+     * 命令名本身可能含空格（如 {@code postgres: writer}），从行首取固定列会漂移，
+     * 而 PID/USER 永远在行首前两列。命令名由第 12 列起原样拼接。
+     */
+    private static java.util.List<ProcRow> parseTopProcs(String out) {
+        java.util.List<ProcRow> list = new java.util.ArrayList<>();
+        if (StrUtil.isBlank(out)) {
+            return list;
+        }
+        boolean headerSeen = false;
+        for (String line : out.split("\r?\n")) {
+            String trimmed = line.trim();
+            if (trimmed.isEmpty()) {
+                if (headerSeen) {
+                    break; // 表头之后的空行 = 进程列表结束
+                }
+                continue;
+            }
+            if (!headerSeen) {
+                if (trimmed.startsWith("PID") && trimmed.contains("%CPU")) {
+                    headerSeen = true;
+                }
+                continue;
+            }
+            String[] cells = trimmed.split("\\s+");
+            if (cells.length < 12) {
+                continue;
+            }
+            try {
+                double cpu = Double.parseDouble(cells[cells.length - 4]);
+                double mem = Double.parseDouble(cells[cells.length - 3]);
+                String command = String.join(" ",
+                        java.util.Arrays.copyOfRange(cells, 11, cells.length));
+                list.add(new ProcRow(cells[0], cells[1], cpu, mem, command));
+            } catch (NumberFormatException e) {
+                log.debug("top 进程行解析失败：{}", trimmed);
+            }
+            if (list.size() >= 10) {
+                break;
+            }
+        }
+        return list;
     }
 
     private record DiskMount(String mount, double usedPercent, String detail) {

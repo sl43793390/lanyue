@@ -3,6 +3,8 @@
   "license": "UNLICENSED",
   "type": "module",
   "dependencies": {
+    "@codemirror/lang-yaml": "^6.1.2",
+    "@codemirror/legacy-modes": "^6.5.1",
     "@polymer/polymer": "3.5.2",
     "@vaadin/bundles": "24.10.6",
     "@vaadin/common-frontend": "0.0.19",
@@ -15,6 +17,7 @@
     "@vaadin/vaadin-material-styles": "24.10.6",
     "@vaadin/vaadin-themable-mixin": "24.10.6",
     "@vaadin/vaadin-usage-statistics": "2.1.3",
+    "codemirror": "^6.0.1",
     "construct-style-sheets-polyfill": "3.1.0",
     "date-fns": "2.29.3",
     "lit": "3.3.3",
@@ -44,6 +47,8 @@
   },
   "vaadin": {
     "dependencies": {
+      "@codemirror/lang-yaml": "^6.1.2",
+      "@codemirror/legacy-modes": "^6.5.1",
       "@polymer/polymer": "3.5.2",
       "@vaadin/bundles": "24.10.6",
       "@vaadin/common-frontend": "0.0.19",
@@ -56,6 +61,7 @@
       "@vaadin/vaadin-material-styles": "24.10.6",
       "@vaadin/vaadin-themable-mixin": "24.10.6",
       "@vaadin/vaadin-usage-statistics": "2.1.3",
+      "codemirror": "^6.0.1",
       "construct-style-sheets-polyfill": "3.1.0",
       "date-fns": "2.29.3",
       "lit": "3.3.3",
@@ -83,8 +89,10 @@
       "vite": "7.3.6",
       "vite-plugin-checker": "0.14.5"
     },
-    "hash": "a7cb0e6f871db6943d53f483d3aac3be08d523038d96ea57a9d71c057864e16e",
+    "hash": "7477c28ef461746bbaad01113357ba141c8d0ae38d3ac91ef5da47cf928bd0d2",
     "overrides": {
+      "@codemirror/lang-yaml": "$@codemirror/lang-yaml",
+      "@codemirror/legacy-modes": "$@codemirror/legacy-modes",
       "@polymer/polymer": "$@polymer/polymer",
       "@vaadin/a11y-base": "24.10.6",
       "@vaadin/accordion": "24.10.6",
@@ -164,6 +172,7 @@
       "@vaadin/vaadin-usage-statistics": "$@vaadin/vaadin-usage-statistics",
       "@vaadin/vertical-layout": "24.10.6",
       "@vaadin/virtual-list": "24.10.6",
+      "codemirror": "$codemirror",
       "construct-style-sheets-polyfill": "$construct-style-sheets-polyfill",
       "date-fns": "$date-fns",
       "lit": "$lit",
@@ -259,6 +268,9 @@
     "@vaadin/dashboard": "24.10.6",
     "@vaadin/grid-pro": "24.10.6",
     "@vaadin/map": "24.10.6",
-    "@vaadin/rich-text-editor": "24.10.6"
+    "@vaadin/rich-text-editor": "24.10.6",
+    "@codemirror/legacy-modes": "$@codemirror/legacy-modes",
+    "codemirror": "$codemirror",
+    "@codemirror/lang-yaml": "$@codemirror/lang-yaml"
   }
 }

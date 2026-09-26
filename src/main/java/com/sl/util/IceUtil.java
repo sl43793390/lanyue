@@ -1,4 +1,6 @@
 package com.sl.util;
+import cn.hutool.core.util.NumberUtil;
+
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
@@ -1281,34 +1283,6 @@ public class IceUtil {
      */
     public static String removeFEFF(String str) {
         return str.replace("\ufeff", "");
-    }
-
-    /**
-     * 计算除法,除数为零使用默认值
-     * 
-     * @param num1 被除数
-     * @param num2 除数
-     * @param defaultValue 除数为零使用的默认值
-     * @return 计算结果
-     * @since 2.0.0
-     */
-    public static String defaultDivisionZero(Double num1, Double num2, String defaultValue) {
-        if (num1 == null || num2 == null) {
-            return "0";
-        }
-        Double microscopic = 0.000000000000001;
-        if (num2 > 0) {
-            if (num2 - 0 < microscopic) {
-                return defaultValue;
-            }
-        } else if (num2 < 0) {
-            if (0 - num2 > microscopic) {
-                return defaultValue;
-            }
-        } else {
-            return defaultValue;
-        }
-        return new Double(num1 / num2).toString();
     }
 
     /**

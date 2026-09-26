@@ -13,14 +13,12 @@ import com.sl.util.Constants;
 import com.sl.util.Util;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.Component;
-import com.vaadin.flow.component.checkbox.CheckboxGroup;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.combobox.MultiSelectComboBox;
 import com.vaadin.flow.component.datepicker.DatePicker;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Div;
-import com.vaadin.flow.component.html.H2;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.FlexLayout;
@@ -30,19 +28,12 @@ import com.vaadin.flow.component.radiobutton.RadioButtonGroup;
 import com.vaadin.flow.component.textfield.PasswordField;
 import com.vaadin.flow.component.textfield.TextField;
 import com.vaadin.flow.data.renderer.ComponentRenderer;
-import com.vaadin.flow.server.streams.DownloadHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Service;
 
-import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
-import java.io.File;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -71,8 +62,6 @@ import java.util.regex.Pattern;
 @Service
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 public class UserManagementView extends ViewBase {
-
-    private static final long serialVersionUID = 1L;
 
     private static final Logger log = LoggerFactory.getLogger(UserManagementView.class);
 
@@ -186,13 +175,12 @@ public class UserManagementView extends ViewBase {
             new UserEditDialog(null).open();
         });
 
-        HorizontalLayout row = toolbar(
+        return toolbar(
                 UiFactory.fieldRow("关键字", "68px", keywordField),
                 UiFactory.fieldRow("状态", "52px", statusBox),
                 UiFactory.fieldRow("权限", "52px", permissionBox),
                 UiFactory.fieldRow("排序", "52px", sortBox),
                 resetBtn, spacer(),  addBtn);
-        return row;
     }
 
     private void resetFilter() {
@@ -454,22 +442,14 @@ public class UserManagementView extends ViewBase {
         if (StrUtil.isBlank(status) || STATUS_ALL.equals(status)) {
             return true;
         }
-        if (STATUS_AVAILABLE.equals(status)) {
-            return user.isAvailable();
-        }
-        if (STATUS_ENABLED.equals(status)) {
-            return user.isEnabled();
-        }
-        if (STATUS_DISABLED.equals(status)) {
-            return !user.isEnabled();
-        }
-        if (STATUS_EXPIRED.equals(status)) {
-            return user.isExpired();
-        }
-        if (STATUS_NEAR_EXPIRE.equals(status)) {
-            return user.isNearExpire();
-        }
-        return true;
+        return switch (status) {
+            case STATUS_AVAILABLE -> user.isAvailable();
+            case STATUS_ENABLED -> user.isEnabled();
+            case STATUS_DISABLED -> !user.isEnabled();
+            case STATUS_EXPIRED -> user.isExpired();
+            case STATUS_NEAR_EXPIRE -> user.isNearExpire();
+            default -> true;
+        };
     }
 
     private boolean matchPermission(User user, String permission) {
@@ -477,22 +457,14 @@ public class UserManagementView extends ViewBase {
             return true;
         }
         Set<String> items = user.permissionSet();
-        if ("无权限".equals(permission)) {
-            return items.isEmpty();
-        }
-        if ("含新增".equals(permission)) {
-            return items.contains(Constants.ADD) || items.contains(Constants.ALL);
-        }
-        if ("含删除".equals(permission)) {
-            return items.contains(Constants.DELETE) || items.contains(Constants.ALL);
-        }
-        if ("含修改".equals(permission)) {
-            return items.contains(Constants.UPDATE) || items.contains(Constants.ALL);
-        }
-        if ("含查询".equals(permission)) {
-            return items.contains(Constants.QUERY) || items.contains(Constants.ALL);
-        }
-        return true;
+        return switch (permission) {
+            case "无权限" -> items.isEmpty();
+            case "含新增" -> items.contains(Constants.ADD) || items.contains(Constants.ALL);
+            case "含删除" -> items.contains(Constants.DELETE) || items.contains(Constants.ALL);
+            case "含修改" -> items.contains(Constants.UPDATE) || items.contains(Constants.ALL);
+            case "含查询" -> items.contains(Constants.QUERY) || items.contains(Constants.ALL);
+            default -> true;
+        };
     }
 
     private void sortView() {
@@ -672,7 +644,7 @@ public class UserManagementView extends ViewBase {
     private String checkProtected(List<User> targets, boolean removing) {
         for (User target : targets) {
             if (target.isBuiltinAdmin()) {
-                return (removing ? "内置管理员 " : "内置管理员 ") + User.ADMIN_USER_ID
+                return "内置管理员 " + User.ADMIN_USER_ID
                         + (removing ? " 不允许删除" : " 不允许禁用");
             }
         }
@@ -781,7 +753,7 @@ public class UserManagementView extends ViewBase {
             hintSpan.addClassName("view-subtitle");
 
             Button cancel = UiFactory.button("取消", this::close);
-            Button save = UiFactory.primary(editing == null ? "创建" : "保存", () -> save());
+            Button save = UiFactory.primary(editing == null ? "创建" : "保存", this::save);
             getFooter().add(cancel, save);
 
             VerticalLayout form = new VerticalLayout(row1, row2, row3, row4, row5, hintSpan);

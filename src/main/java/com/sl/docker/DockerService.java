@@ -1111,12 +1111,12 @@ public class DockerService {
             }
             StringBuilder type = new StringBuilder();
             for (int i = 0; i < numericAt; i++) {
-                if (type.length() > 0) {
+                if (!type.isEmpty()) {
                     type.append(' ');
                 }
                 type.append(cells[i]);
             }
-            String reclaimable = StrUtil.join(" ", Arrays.copyOfRange(cells, numericAt + 3, cells.length));
+            String reclaimable = StrUtil.join(" ", (Object) Arrays.copyOfRange(cells, numericAt + 3, cells.length));
             usages.add(new DockerSystemInfo.DiskUsage(type.toString(), cells[numericAt],
                     cells[numericAt + 1], cells[numericAt + 2], reclaimable));
         }

@@ -6,6 +6,7 @@ import com.sl.entity.ConnectionInfo;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.LoadingOverlay;
 import com.sl.ui.component.TabHost;
+import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
 import com.sl.util.CharsetDetector;
@@ -458,25 +459,24 @@ public class RemoteFileView extends ViewBase {
         }, "file-edit-" + row.name()).start());
     }
 
-    /** 编辑弹窗：textarea 显示内容，下方「放弃」和「保存」。 */
+    /** 编辑弹窗：CodeMirror 编辑器（语法模式按文件扩展名选择），下方「放弃」和「保存」。 */
     private void showEditorDialog(FileRow row, File tmp, CharsetDetector.TextSnapshot snapshot) {
         Dialog dialog = new Dialog();
         dialog.setWidth("900px");
         dialog.setResizable(true);
         dialog.setHeaderTitle("编辑文件：" + row.name());
 
-        TextArea area = UiFactory.textArea();
-        area.setWidthFull();
-        area.setHeight("55vh");
-        area.getStyle().set("--lumo-font-family", "Consolas, 'Courier New', monospace");
-        area.setValue(snapshot.content());
+        CodeEditor editor = new CodeEditor(CodeEditor.suggestMode(row.name()));
+        editor.setWidthFull();
+        editor.setHeight("55vh");
+        editor.setValue(snapshot.content());
 
         Span hint = new Span("路径：" + row.path()
                 + "　编码：" + snapshot.label()
                 + "　大小：" + humanSize(row.size()));
         hint.addClassName("search-status");
 
-        VerticalLayout content = new VerticalLayout(hint, area);
+        VerticalLayout content = new VerticalLayout(hint, editor);
         content.setPadding(true);
         content.setSpacing(false);
         content.getStyle().set("gap", "8px");
@@ -487,9 +487,9 @@ public class RemoteFileView extends ViewBase {
                     dialog.close();
                 }),
                 Dialogs.primaryButton("保存", () ->
-                        saveEditedFile(row, tmp, snapshot, area.getValue(), dialog)));
+                        saveEditedFile(row, tmp, snapshot, editor.getValue(), dialog)));
         dialog.open();
-        area.focus();
+        editor.focusEditor();
     }
 
     /**

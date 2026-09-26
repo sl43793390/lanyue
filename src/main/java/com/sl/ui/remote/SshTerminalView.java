@@ -44,8 +44,6 @@ import org.springframework.context.annotation.Scope;
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 public class SshTerminalView extends ViewBase {
 
-    private static final long serialVersionUID = 1L;
-
     private static final Logger log = LoggerFactory.getLogger(SshTerminalView.class);
 
     /** 相对 UI 基址的终端静态页。IFrame 的相对路径按 /log/ 解析，不用拼 context-path。 */
