@@ -194,6 +194,30 @@ CREATE TABLE "script_mgmt" (
 );
 
 -- ----------------------------
+-- Table structure for drawio_file（drawio绘图，其他工具 → drawio绘图）
+--   id_file       图表 ID，主键，取创建时刻的纳秒值（System.nanoTime()），应用生成
+--   id_user       归属用户，users.id_user（登录名），用户隔离的依据
+--   file_name     图表名称
+--   file_content  图表内容，draw.io 的 mxfile XML（纯文本）。16000 × 4 字节 ≈ 64KB
+--                 （utf8mb4），贴近 MySQL 8 行大小上限，与 DbInitializer.DRAWIO_FILE
+--                 的长度定义保持一致；普通流程图 XML 在几 KB 量级
+--   create_time   创建时间，文本列 yyyy-MM-dd HH:mm:ss
+--   update_time   最后保存时间，文本列 yyyy-MM-dd HH:mm:ss
+--
+-- 注意：这张表不需要手工执行本脚本，DbInitializer 启动时会自动建出来，
+-- 写在这里只是让 demo.db 的表结构文档保持完整。
+-- ----------------------------
+CREATE TABLE IF NOT EXISTS "drawio_file" (
+                               "id_file" VARCHAR(32) NOT NULL,
+                               "id_user" VARCHAR(50) NOT NULL,
+                               "file_name" VARCHAR(128) NOT NULL,
+                               "file_content" VARCHAR(16000),
+                               "create_time" VARCHAR(32),
+                               "update_time" VARCHAR(32),
+                               PRIMARY KEY ("id_file")
+);
+
+-- ----------------------------
 -- Table structure for app_setting（界面偏好 / 零散状态的通用 kv 表）
 --   setting_key    键，由调用方约定，例如 compose.pref.admin；主键
 --   setting_value  值，纯文本；compose 偏好是"lastHost=..." + 每行一条历史根目录

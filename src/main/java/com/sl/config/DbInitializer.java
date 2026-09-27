@@ -99,6 +99,23 @@ public class DbInitializer implements ApplicationRunner {
             new String[] {"id_script"});
 
     /**
+     * drawio绘图（其他工具 → drawio绘图）。
+     * 主键 id_file 是创建时的纳秒值（应用生成、IdType.INPUT），单列主键。
+     * file_content 存 draw.io 的 mxfile XML（纯文本），取 16000：utf8mb4 下约 64KB，
+     * 已贴近 MySQL 8 行大小上限（65535 字节），是两库兼容下的实际上限——
+     * 普通流程图的 XML 在几 KB 量级，够用；再大的图会被数据库报错拦下。
+     */
+    private static final TableDef DRAWIO_FILE = new TableDef("drawio_file",
+            new Object[][] {
+                    {"id_file", 32, true},
+                    {"id_user", 50, true},
+                    {"file_name", 128, true},
+                    {"file_content", 16000, false},
+                    {"create_time", 32, false},
+                    {"update_time", 32, false}},
+            new String[] {"id_file"});
+
+    /**
      * 启动时逐张兜底的全部表，业务表与 demo.sql / demo-mysql8.sql 逐表逐列对应。
      * <p>
      * 改表结构时**三处同步**：这里的定义、demo.sql、demo-mysql8.sql。
@@ -171,7 +188,8 @@ public class DbInitializer implements ApplicationRunner {
                             {"tag", 64, false},
                             {"cd_description", 255, false}},
                     new String[] {"id_host", "tomcat_id"}),
-            SCRIPT_MGMT};
+            SCRIPT_MGMT,
+            DRAWIO_FILE};
 
     /** 一张表的建表定义：表名、列（{列名, 长度, 是否 NOT NULL}）、主键列。 */
     private static final class TableDef {

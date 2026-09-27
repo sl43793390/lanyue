@@ -279,3 +279,38 @@ lanyue/
 
 **Q：从 SQLite 切到 MySQL 后老数据还在吗？**
 不在。两个库独立，迁移步骤（建库 → 建表 → 逐表搬数据 → 切 profile）见 `application-mysql.properties` 内的六步清单。密码摘要与库无关，搬过去即可正常登录。
+
+** nginx作为反向代理服务器配置需要变更，默认不会转发websocket **
+```aiignore
+
+# http{} 块里加（若已有同名 map 则跳过）
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+# 443 的 server 块里
+location /log/ {
+    proxy_pass http://127.0.0.1:9095/log;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;          # ← 根因修复
+    proxy_set_header Connection $connection_upgrade; # ← 根因修复
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto https;        # 修掉 http:// 重定向
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port 443;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_read_timeout 3600s;   # 默认 60s 会周期性掐断 push/终端长连接
+    proxy_send_timeout 3600s;
+    proxy_buffering off;
+}
+
+```
+## 如何使用drawio嵌入功能
+ 1. 在当前jar包所在目录下新建一个drawio目录，把最新版drawio源码中的webapps下的所有代码直接复制到该目录下（该目录下包含一mxgraph、styles、js、images、math4、shapes、resources等目录），重启项目
+
+
+
+
+
+
