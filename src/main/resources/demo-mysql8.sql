@@ -224,11 +224,11 @@ CREATE TABLE IF NOT EXISTS `drawio_file` (
     `id_file`      VARCHAR(32)  NOT NULL,
     `id_user`      VARCHAR(50)  NOT NULL,
     `file_name`    VARCHAR(128) NOT NULL,
-    `file_content` VARCHAR(16000),
+    `file_content` MEDIUMTEXT,
     `create_time`  VARCHAR(32),
     `update_time`  VARCHAR(32),
     PRIMARY KEY (`id_file`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------
 -- Table structure for app_setting（界面偏好 / 零散状态的通用 kv 表）
