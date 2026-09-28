@@ -56,7 +56,6 @@
         <!-- Vaadin -->
         <dependency>
             <groupId>com.vaadin</groupId>
-            <!-- Replace artifactId with vaadin-core to use only free components -->
             <artifactId>vaadin</artifactId>
         </dependency>
         <dependency>
@@ -67,11 +66,6 @@
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-starter-logging</artifactId>
                 </exclusion>
-                <!--
-                    Vaadin 的 starter 会把 log4j-to-slf4j 作为直接依赖引进来（把 log4j2 API 桥到 SLF4J）。
-                    本项目已选 Log4j2 作为真正的后端，log4j-to-slf4j 与 log4j-slf4j2-impl 同时存在会形成
-                    slf4j -> log4j2 -> slf4j 的环，必须排掉。排掉后 log4j-api 由 log4j-core 提供，日志直落 Log4j2。
-                -->
                 <exclusion>
                     <groupId>org.apache.logging.log4j</groupId>
                     <artifactId>log4j-to-slf4j</artifactId>
@@ -173,12 +167,6 @@
             <scope>test</scope>
         </dependency>
 
-        <dependency>
-            <groupId>com.vaadin.componentfactory</groupId>
-            <artifactId>enhanced-rich-text-editor</artifactId>
-            <version>5.0.0</version>
-        </dependency>
-
         <!--        数据源链接池-->
         <dependency>
             <groupId>com.zaxxer</groupId>
@@ -222,11 +210,6 @@
             <version>5.8.37</version>
         </dependency>
 
-        <!-- ================================================================
-             以下为「日志查看 / 文件管理 / 应用发布」平台需要的功能依赖，
-             从旧项目 logviewer 平移过来。版本沿用旧项目已验证过的组合。
-             ================================================================ -->
-
         <dependency>
             <groupId>com.hierynomus</groupId>
             <artifactId>sshj</artifactId>
@@ -238,14 +221,6 @@
             <groupId>com.alibaba.fastjson2</groupId>
             <artifactId>fastjson2</artifactId>
             <version>2.0.65</version>
-        </dependency>
-
-        <!-- Excel 导出。不用 EasyExcel：它依赖 cglib，在 JDK 17+ 会因模块访问限制
-             抛 InaccessibleObjectException，导出按钮直接报错。POI 没有这个依赖。 -->
-        <dependency>
-            <groupId>org.apache.poi</groupId>
-            <artifactId>poi-ooxml</artifactId>
-            <version>5.4.1</version>
         </dependency>
 
         <!-- 国密摘要：加密工具页的 SM3 / SM4 等算法由 BC provider 提供。
