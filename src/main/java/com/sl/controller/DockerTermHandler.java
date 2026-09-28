@@ -4,12 +4,11 @@ import cn.hutool.core.io.IoUtil;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
-import com.jcraft.jsch.ChannelShell;
-import com.jcraft.jsch.JSch;
-import com.jcraft.jsch.Session;
 import com.sl.docker.DockerTerminalRegistry;
 import com.sl.entity.ConnectionInfo;
 import com.sl.util.SSHClientUtil;
+import net.schmizz.sshj.connection.channel.direct.PTYMode;
+import net.schmizz.sshj.connection.channel.direct.Session;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -21,12 +20,12 @@ import jakarta.websocket.OnError;
 import jakarta.websocket.OnMessage;
 import jakarta.websocket.OnOpen;
 import jakarta.websocket.server.ServerEndpoint;
-import java.io.File;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URLDecoder;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -60,7 +59,6 @@ public class DockerTermHandler {
     private static final int MAX_COLS = 500;
     private static final int MIN_ROWS = 5;
     private static final int MAX_ROWS = 200;
-    private static final int CONNECT_TIMEOUT_MS = 15000;
 
     private static final ConcurrentHashMap<String, HandlerItem> HANDLERS =
             new ConcurrentHashMap<String, HandlerItem>();
@@ -260,13 +258,13 @@ public class DockerTermHandler {
         private int cols;
         private int rows;
 
-        /** LOGS 模式：sshj 的命令通道 */
+        /** 两种模式共用：LOGS 走命令输出流，EXEC 走 pty shell */
         private SSHClientUtil ssh;
         private InputStream logStream;
 
-        /** EXEC 模式：JSch 的 shell 通道（docker exec -it 需要 tty） */
-        private Session jschSession;
-        private ChannelShell channel;
+        /** EXEC 模式：sshj 的 session 通道（pty 已分配）与 shell */
+        private Session sshjSession;
+        private Session.Shell shell;
         private OutputStream execOutput;
         private InputStream execInput;
 
@@ -306,31 +304,25 @@ public class DockerTermHandler {
             } catch (NumberFormatException e) {
                 throw new java.io.IOException("端口不是合法数字：" + info.getCdPort());
             }
-            JSch jsch = new JSch();
-            String keyPath = info.getCdKeyPath();
-            if (StrUtil.isNotBlank(keyPath) && new File(keyPath).isFile()) {
-                if (StrUtil.isBlank(info.getCdPassword())) {
-                    jsch.addIdentity(keyPath);
-                } else {
-                    jsch.addIdentity(keyPath, info.getCdPassword());
-                }
-                log.info("docker pty 会话使用私钥认证：{}", keyPath);
-            }
-            Session sshSession = jsch.getSession(info.getIdUser(), info.getIdHost(), port);
-            sshSession.setPassword(info.getCdPassword());
-            sshSession.setConfig("StrictHostKeyChecking", "no");
-            sshSession.connect(CONNECT_TIMEOUT_MS);
-            this.jschSession = sshSession;
-
-            this.channel = (ChannelShell) sshSession.openChannel("shell");
+            // 认证（私钥优先、密码回落）复用统一建连逻辑；SSHClientUtil 建链自带 15s 超时
+            this.ssh = SSHClientUtil.connect(info);
             try {
-                this.channel.setPtyType("xterm-256color");
-                this.channel.setPtySize(cols, rows, 0, 0);
+                this.sshjSession = ssh.getClient().startSession();
+                try {
+                    // pty-req 必须在 shell 请求之前发出
+                    this.sshjSession.allocatePTY("xterm-256color", cols, rows, 0, 0, new EnumMap<>(PTYMode.class));
+                    this.shell = this.sshjSession.startShell();
+                } catch (Exception e) {
+                    closeChannelsQuietly();
+                    throw e;
+                }
             } catch (Exception e) {
-                log.warn("设置 pty 尺寸失败，将使用默认 80x24：{}", e.getMessage());
+                ssh.closeConnection();
+                this.ssh = null;
+                throw e;
             }
-            this.execOutput = this.channel.getOutputStream();
-            this.execInput = this.channel.getInputStream();
+            this.execOutput = this.shell.getOutputStream();
+            this.execInput = this.shell.getInputStream();
 
             if (DockerTerminalRegistry.Kind.COMPOSE_LOGS == spec.getKind()) {
                 sendNotice(session, "info", "正在聚合跟踪 " + spec.getContainerName()
@@ -351,8 +343,8 @@ public class DockerTermHandler {
 
         void start() throws Exception {
             if (DockerTerminalRegistry.Kind.LOGS != spec.getKind()) {
-                this.channel.connect(CONNECT_TIMEOUT_MS);
-                // 把 docker 命令当成用户输入写进去；exec 那条末尾的 exit 会把整个 shell 一起收掉
+                // sshj 的 startShell() 已完成通道建立，直接把 docker 命令当成用户输入写进去；
+                // exec 那条末尾的 exit 会把整个 shell 一起收掉
                 this.execOutput.write((startupCommand() + "\n").getBytes(StandardCharsets.UTF_8));
                 this.execOutput.flush();
             }
@@ -386,11 +378,11 @@ public class DockerTermHandler {
             }
             cols = newCols;
             rows = newRows;
-            if (null == channel) {
+            if (null == shell) {
                 return;
             }
             try {
-                channel.setPtySize(cols, rows, 0, 0);
+                shell.changeWindowDimensions(cols, rows, 0, 0);
             } catch (Exception e) {
                 log.warn("调整 pty 尺寸失败：{}", e.getMessage());
             }
@@ -413,32 +405,38 @@ public class DockerTermHandler {
             }
         }
 
+        private void closeChannelsQuietly() {
+            IoUtil.close(execInput);
+            IoUtil.close(execOutput);
+            try {
+                if (null != shell) {
+                    shell.close();
+                }
+            } catch (Exception ignore) {
+                // 收尾失败不影响主流程
+            }
+            try {
+                if (null != sshjSession) {
+                    sshjSession.close();
+                }
+            } catch (Exception ignore) {
+                // 收尾失败不影响主流程
+            }
+        }
+
         void closeQuietly() {
             if (null != logStream) {
                 IoUtil.close(logStream);
                 logStream = null;
             }
+            closeChannelsQuietly();
+            execInput = null;
+            execOutput = null;
+            shell = null;
+            sshjSession = null;
             if (null != ssh) {
                 ssh.closeConnection();
                 ssh = null;
-            }
-            IoUtil.close(execInput);
-            IoUtil.close(execOutput);
-            if (null != channel) {
-                try {
-                    channel.disconnect();
-                } catch (Exception e) {
-                    log.debug("关闭 shell 通道失败：{}", e.getMessage());
-                }
-                channel = null;
-            }
-            if (null != jschSession) {
-                try {
-                    jschSession.disconnect();
-                } catch (Exception e) {
-                    log.debug("关闭 ssh 会话失败：{}", e.getMessage());
-                }
-                jschSession = null;
             }
         }
     }

@@ -192,8 +192,8 @@ public class RemoteFileView extends ViewBase {
         // 多选模式：表格左侧自动出现勾选列，配合「批量删除」按钮
         grid.setSelectionMode(Grid.SelectionMode.MULTI);
         grid.addComponentColumn(this::nameCell).setHeader("名称").setAutoWidth(true).setFlexGrow(1);
-        grid.addColumn(FileRow::sizeText).setHeader("大小").setAutoWidth(true);
-        grid.addColumn(FileRow::mtime).setHeader("修改时间").setAutoWidth(true);
+        grid.addColumn(FileRow::sizeText).setHeader("大小").setAutoWidth(true).setSortable(true);
+        grid.addColumn(FileRow::mtime).setHeader("修改时间").setAutoWidth(true).setSortable(true);
         grid.addComponentColumn(this::actionsCell).setHeader("操作").setAutoWidth(true);
         grid.addClassName("standard-grid");
     }

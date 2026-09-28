@@ -4,12 +4,12 @@ import cn.hutool.core.io.IoUtil;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
-import com.jcraft.jsch.ChannelShell;
-import com.jcraft.jsch.JSch;
-import com.jcraft.jsch.Session;
 import com.sl.service.TerminalTokens;
 import com.sl.entity.ConnectionInfo;
 import com.sl.entity.SshModel;
+import com.sl.util.SSHClientUtil;
+import net.schmizz.sshj.connection.channel.direct.PTYMode;
+import net.schmizz.sshj.connection.channel.direct.Session;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -21,13 +21,13 @@ import jakarta.websocket.OnError;
 import jakarta.websocket.OnMessage;
 import jakarta.websocket.OnOpen;
 import jakarta.websocket.server.ServerEndpoint;
-import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URLDecoder;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -63,8 +63,6 @@ public class SshHandler {
     private static final int MAX_COLS = 500;
     private static final int MIN_ROWS = 5;
     private static final int MAX_ROWS = 200;
-    /** 建链超时，避免 ip 通了但端口被防火墙丢弃时线程无限挂住 */
-    private static final int CONNECT_TIMEOUT_MS = 15000;
 
     private static final ConcurrentHashMap<String, HandlerItem> HANDLER_ITEM_CONCURRENT_HASH_MAP = new ConcurrentHashMap<String, HandlerItem>();
     private static final AtomicInteger ONLINE_COUNT = new AtomicInteger(0);
@@ -213,14 +211,19 @@ public class SshHandler {
             IoUtil.close(handlerItem.inputStream);
             IoUtil.close(handlerItem.outputStream);
             try {
-                handlerItem.channel.disconnect();
+                handlerItem.channel.close();
             } catch (Exception e) {
                 log.debug("关闭 shell 通道失败：{}", e.getMessage());
             }
             try {
-                handlerItem.openSession.disconnect();
+                handlerItem.openSession.close();
             } catch (Exception e) {
                 log.debug("关闭 ssh 会话失败：{}", e.getMessage());
+            }
+            try {
+                handlerItem.sshUtil.closeConnection();
+            } catch (Exception e) {
+                log.debug("关闭 ssh 连接失败：{}", e.getMessage());
             }
         }
         closeQuietly(session);
@@ -285,8 +288,12 @@ public class SshHandler {
         private final jakarta.websocket.Session session;
         private final InputStream inputStream;
         private final OutputStream outputStream;
+        /** 连接（含认证）由 SSHClientUtil 统一管理：私钥优先、密码回落 */
+        private final SSHClientUtil sshUtil;
+        /** sshj 的 session 通道，pty 已在上面分配 */
         private final Session openSession;
-        private final ChannelShell channel;
+        /** sshj 的 shell，读写流与 window-change 都走它 */
+        private final Session.Shell channel;
         private final SshModel sshItem;
         private final StringBuilder nowLineInput = new StringBuilder();
         private int cols;
@@ -310,44 +317,29 @@ public class SshHandler {
             }
             this.sshItem.setPort(port);
 
-            JSch jsch = new JSch();
-            String keyPath = addr.getCdKeyPath();
-            if (StrUtil.isNotBlank(keyPath)) {
-                File keyFile = new File(keyPath);
-                if (keyFile.isFile()) {
-                    // 私钥口令沿用连接信息里的密码字段（与其它页面保持一致）
-                    if (StrUtil.isBlank(addr.getCdPassword())) {
-                        jsch.addIdentity(keyPath);
-                    } else {
-                        jsch.addIdentity(keyPath, addr.getCdPassword());
-                    }
-                    log.info("终端使用私钥认证：{}", keyPath);
-                } else {
-                    log.warn("终端配置的私钥不存在，改用密码认证：{}", keyPath);
-                }
-            }
-
-            Session sshSession = jsch.getSession(addr.getIdUser(), addr.getIdHost(), port);
-            sshSession.setPassword(addr.getCdPassword());
-            sshSession.setConfig("StrictHostKeyChecking", "no");
-            // 原来 session.connect() 不带超时，端口被防火墙 DROP 时线程会一直挂着
-            sshSession.connect(CONNECT_TIMEOUT_MS);
-            this.openSession = sshSession;
-
-            this.channel = (ChannelShell) sshSession.openChannel("shell");
+            // 认证（私钥优先、密码回落）复用文件管理那套逻辑，行为与其它页面一致
+            this.sshUtil = SSHClientUtil.connect(addr);
             try {
-                // xterm-256color 比 vt100 更贴近真实终端：readline 的行编辑序列更完整
-                this.channel.setPtyType("xterm-256color");
-                this.channel.setPtySize(cols, rows, 0, 0);
+                this.openSession = sshUtil.getClient().startSession();
+                try {
+                    // pty-req 必须在 shell 请求之前发出；xterm-256color 比 vt100 更贴近真实终端
+                    this.openSession.allocatePTY("xterm-256color", cols, rows, 0, 0, new EnumMap<>(PTYMode.class));
+                    this.channel = this.openSession.startShell();
+                } catch (Exception e) {
+                    closeChannelQuietly();
+                    throw e;
+                }
             } catch (Exception e) {
-                log.warn("设置 pty 尺寸失败，将使用默认 80x24：{}", e.getMessage());
+                sshUtil.closeConnection();
+                throw e;
             }
+            log.info("终端使用 {} 认证已连接：{}", addr.getCdKeyPath() != null ? "私钥/密码" : "密码", addr.getIdHost());
             this.inputStream = this.channel.getInputStream();
             this.outputStream = this.channel.getOutputStream();
         }
 
         void startRead() throws Exception {
-            this.channel.connect(CONNECT_TIMEOUT_MS);
+            // sshj 的 startShell() 已完成通道建立（open + shell 请求确认），这里只管起读线程。
             // 用独立守护线程而不是公共线程池：读循环是整个会话生命周期的长任务，
             // 放进 ThreadUtil 的池里会长期占用池线程
             Thread thread = new Thread(this, "ssh-terminal-" + session.getId());
@@ -400,8 +392,8 @@ public class SshHandler {
             cols = newCols;
             rows = newRows;
             try {
-                // 已连接后调用会走 SSH_MSG_CHANNEL_REQUEST(window-change)
-                channel.setPtySize(cols, rows, 0, 0);
+                // 走 SSH_MSG_CHANNEL_REQUEST(window-change)
+                channel.changeWindowDimensions(cols, rows, 0, 0);
                 log.debug("终端尺寸调整为 {}x{}", cols, rows);
             } catch (Exception e) {
                 log.warn("调整 pty 尺寸失败：{}", e.getMessage());
@@ -419,12 +411,32 @@ public class SshHandler {
                     sendBinary(session, buffer, len);
                 }
             } catch (Exception e) {
-                if (openSession.isConnected()) {
+                if (sshUtil.isConnected()) {
                     log.warn("终端读线程异常结束：{}", e.getMessage());
                     sendNotice(session, "err", "终端连接中断：" + e.getMessage());
                 }
             } finally {
                 destroy(session);
+            }
+        }
+
+        /** 关 shell 通道与 session 通道，只在建连半途失败时用 */
+        private void closeChannelQuietly() {
+            IoUtil.close(outputStream);
+            IoUtil.close(inputStream);
+            try {
+                if (channel != null) {
+                    channel.close();
+                }
+            } catch (Exception ignore) {
+                // 收尾失败不影响主流程
+            }
+            try {
+                if (openSession != null) {
+                    openSession.close();
+                }
+            } catch (Exception ignore) {
+                // 收尾失败不影响主流程
             }
         }
     }

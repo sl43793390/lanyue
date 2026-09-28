@@ -227,17 +227,10 @@
              从旧项目 logviewer 平移过来。版本沿用旧项目已验证过的组合。
              ================================================================ -->
 
-        <!-- SSH：JSch 负责 SFTP 与远程命令（含 pty 终端），sshj 负责远程文件管理。
-             mwiede 的 fork 修了大量上游 CVE，别换回 com.jcraft:jsch。 -->
-        <dependency>
-            <groupId>com.github.mwiede</groupId>
-            <artifactId>jsch</artifactId>
-            <version>0.2.17</version>
-        </dependency>
         <dependency>
             <groupId>com.hierynomus</groupId>
             <artifactId>sshj</artifactId>
-            <version>0.31.0</version>
+            <version>0.40.0</version>
         </dependency>
 
         <!-- JSON：远程接口响应解析、compose 元信息文件读写 -->

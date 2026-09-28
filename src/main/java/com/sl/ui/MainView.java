@@ -113,7 +113,7 @@ public class MainView extends VerticalLayout implements TabHost {
 //        setFlexGrow(1, contentArea);
 
         // 进来先打开概览，避免主区域一片空白
-        openTab(MenuRegistry.defaultItem());
+//        openTab(MenuRegistry.defaultItem());
         openTab(MenuRegistry.remoteServer());
     }
 

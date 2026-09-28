@@ -30,9 +30,26 @@ public class UserPrincipal implements UserDetails {
     private static final long serialVersionUID = 1L;
 
     private final User user;
+    /**
+     * 登录冻结（连续密码错误）标志。
+     * <p>
+     * 不能在 {@link com.sl.security.DbUserDetailsService} 里直接抛
+     * {@code LockedException}：Spring Security 6.5 的
+     * {@code DaoAuthenticationProvider.retrieveUser} 会把 UserDetailsService 抛出的
+     * 非 {@code UsernameNotFoundException} 异常包装成
+     * {@code InternalAuthenticationServiceException}，登录页拿不到"冻结"语义。
+     * 正确通道是 {@code isAccountNonLocked()} 返回 false——由 provider 的
+     * 前置检查抛出标准的 {@code LockedException}，且发生在密码校验之前。
+     */
+    private final transient boolean locked;
 
     public UserPrincipal(User user) {
+        this(user, false);
+    }
+
+    public UserPrincipal(User user, boolean locked) {
         this.user = user;
+        this.locked = locked;
     }
 
     /**
@@ -72,7 +89,7 @@ public class UserPrincipal implements UserDetails {
 
     @Override
     public boolean isAccountNonLocked() {
-        return true;
+        return !locked;
     }
 
     @Override

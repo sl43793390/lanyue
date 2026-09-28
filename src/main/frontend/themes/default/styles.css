@@ -985,3 +985,14 @@ vaadin-text-area[has-label]::part(label) {
     background-color: #d4edda;
     color: #155724;
 }
+
+/* ------------------------------------------------------------------
+   Grid 偶数行浅蓝背景（全局，所有页面的 vaadin-grid 一律生效）。
+   说明：vaadin-grid 按 data index 的奇偶分配 part，index 从 0 起算，
+   所以视觉上的第 2、4、6…行（用户口中的偶数行）是 odd-row 部分；
+   配色写在 cell 上（Lumo 自己的 row-stripes 也是这么做的），避免
+   行底色被单元格背景盖住。选中行的背景图在 cell 之上，不受影响。
+   ------------------------------------------------------------------ */
+vaadin-grid::part(odd-row-cell) {
+    background-color: #eaf2ff;
+}

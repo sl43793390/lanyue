@@ -148,6 +148,15 @@ public class SSHClientUtil {
         return util;
     }
 
+    /**
+     * 返回底层 sshj 客户端，供需要自开 session 通道的场景使用
+     * （SSH 终端、Docker 容器终端要在一条连接上开 pty shell）。
+     * 连接未建立时返回 null。调用方只管用，**不要关它**——生命周期归 {@link #closeConnection()}。
+     */
+    public SSHClient getClient() {
+        return sshClient;
+    }
+
     /** 是否是 ssh-keygen 默认产出的新格式私钥（sshj 0.31 不支持） */
     private static boolean isOpenSshNewFormat(File keyFile) {
         byte[] buf = new byte[64];

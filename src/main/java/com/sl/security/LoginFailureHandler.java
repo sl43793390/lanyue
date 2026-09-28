@@ -41,11 +41,13 @@ public class LoginFailureHandler extends SimpleUrlAuthenticationFailureHandler {
     private static final String FIELD_USERNAME = "username";
 
     private final DbUserDetailsService userDetailsService;
+    private final LoginAttemptService loginAttemptService;
 
-    public LoginFailureHandler(DbUserDetailsService userDetailsService) {
+    public LoginFailureHandler(DbUserDetailsService userDetailsService, LoginAttemptService loginAttemptService) {
         // 失败后回登录页，带上 ?error 让 Vaadin 的 LoginForm 自己进入错误态
         super("/login?error");
         this.userDetailsService = userDetailsService;
+        this.loginAttemptService = loginAttemptService;
     }
 
     @Override
@@ -63,6 +65,9 @@ public class LoginFailureHandler extends SimpleUrlAuthenticationFailureHandler {
      * <p>
      * 账号过期这两种情况要带上具体日期，与用户管理页里的文案口径保持一致——
      * 只说"已过期"用户还得去问管理员是哪天到期的。
+     * <p>
+     * 失败计数只认 {@link BadCredentialsException}（密码错误）：禁用、过期这类失败
+     * 与密码对错无关，混进计数会让一个被禁用的账号被永久误记。
      */
     private String resolveMessage(HttpServletRequest request, AuthenticationException exception) {
         if (exception instanceof DisabledException) {
@@ -77,6 +82,14 @@ public class LoginFailureHandler extends SimpleUrlAuthenticationFailureHandler {
             return "该账号已过期，请联系系统管理员续期";
         }
         if (exception instanceof LockedException) {
+            // 冻结期被拒（来自 provider 前置检查的标准 LockedException）：
+            // 用剩余时间拼成中文提示；非冻结原因的锁定退回通用文案
+            long seconds = loginAttemptService.remainingLockSeconds(request.getParameter(FIELD_USERNAME));
+            if (seconds > 0) {
+                long minutes = (seconds + 59) / 60;
+                return "该账号因连续 " + LoginAttemptService.MAX_ATTEMPTS
+                        + " 次密码错误已被冻结，请约 " + minutes + " 分钟后再试";
+            }
             return "该账号已被锁定，请联系系统管理员";
         }
         if (exception instanceof CredentialsExpiredException) {
@@ -84,6 +97,16 @@ public class LoginFailureHandler extends SimpleUrlAuthenticationFailureHandler {
         }
         if (exception instanceof BadCredentialsException) {
             // 用户名不存在与密码错误在这里是同一条，不能分开提示，否则可以被用来枚举账号
+            boolean justLocked = loginAttemptService.onFailure(request.getParameter(FIELD_USERNAME));
+            if (justLocked) {
+                return "密码已连续错误 " + LoginAttemptService.MAX_ATTEMPTS + " 次，该账号冻结 "
+                        + LoginAttemptService.LOCK_MINUTES + " 分钟";
+            }
+            int count = loginAttemptService.failedCount(request.getParameter(FIELD_USERNAME));
+            if (count > 0) {
+                return "用户名或密码错误（已错 " + count + " 次，"
+                        + LoginAttemptService.MAX_ATTEMPTS + " 次将冻结 " + LoginAttemptService.LOCK_MINUTES + " 分钟）";
+            }
             return "用户名或密码错误";
         }
         log.warn("未识别的登录失败类型 {}", exception.getClass().getName(), exception);

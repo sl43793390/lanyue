@@ -27,9 +27,11 @@ public class DbUserDetailsService implements UserDetailsService {
     private static final Logger log = LoggerFactory.getLogger(DbUserDetailsService.class);
 
     private final UserDao userDao;
+    private final LoginAttemptService loginAttemptService;
 
-    public DbUserDetailsService(UserDao userDao) {
+    public DbUserDetailsService(UserDao userDao, LoginAttemptService loginAttemptService) {
         this.userDao = userDao;
+        this.loginAttemptService = loginAttemptService;
     }
 
     @Override
@@ -38,13 +40,22 @@ public class DbUserDetailsService implements UserDetailsService {
             throw new UsernameNotFoundException("用户名不能为空");
         }
         String userId = username.trim();
+        // 冻结状态在这里查出、由 UserPrincipal.isAccountNonLocked() 带出去：
+        // DaoAuthenticationProvider 的前置检查会以标准 LockedException 拒绝，
+        // 且发生在密码校验之前。不能在这里直接抛 LockedException——retrieveUser
+        // 会把它包装成 InternalAuthenticationServiceException，登录页拿不到冻结语义。
+        boolean locked = loginAttemptService.isLocked(userId);
         User user = userDao.selectById(userId);
         if (user == null) {
             // 只记用户名，不记密码；这条日志用于区分"确实没这个账号"和"密码错了"
             log.debug("登录失败：用户 {} 不存在", userId);
             throw new UsernameNotFoundException("用户不存在: " + userId);
         }
-        return new UserPrincipal(user);
+        if (locked) {
+            log.warn("登录被拒：账号 {} 处于冻结期（剩余约 {} 分钟）",
+                    userId, (loginAttemptService.remainingLockSeconds(userId) + 59) / 60);
+        }
+        return new UserPrincipal(user, locked);
     }
 
     /**

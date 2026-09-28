@@ -751,7 +751,21 @@
         reconnectNode.onclick = function () {
             term.reset();
             connect();
-        };        /* ---------------- 外观设置控件 ---------------- */
+        };
+
+        /* ---------------- 自动化/验证钩子 ----------------
+           页面主体在 IIFE 里，CDP 验证脚本拿不到 term / serializeAddon，
+           而终端用 WebGL 渲染时 .xterm-rows 的 DOM 里也没有文本。
+           这里把「读缓冲区」和「读遮罩状态」挂到 window 上，仅供
+           scripts/verify-*.mjs 这类自动化断言使用，页面自身不用它。 */
+        window.__termDump = function () {
+            try { return serializeAddon.serialize(); } catch (e) { return ''; }
+        };
+        window.__termMaskText = function () {
+            var t = document.getElementById('conn-text');
+            var e = document.getElementById('conn-error');
+            return (e && e.textContent ? e.textContent : '') + (t && t.textContent ? t.textContent : '');
+        };
 
         var fontLabel = document.getElementById('fontsize');
         var themeToggle = document.getElementById('themetoggle');

@@ -50,11 +50,14 @@ public class SecurityConfig {
 
     private final DbUserDetailsService userDetailsService;
     private final DbUserDetailsPasswordService passwordService;
+    private final LoginAttemptService loginAttemptService;
 
     public SecurityConfig(DbUserDetailsService userDetailsService,
-                         DbUserDetailsPasswordService passwordService) {
+                         DbUserDetailsPasswordService passwordService,
+                         LoginAttemptService loginAttemptService) {
         this.userDetailsService = userDetailsService;
         this.passwordService = passwordService;
+        this.loginAttemptService = loginAttemptService;
     }
 
     @Bean
@@ -131,6 +134,6 @@ public class SecurityConfig {
 
     @Bean
     public AuthenticationFailureHandler loginFailureHandler() {
-        return new LoginFailureHandler(userDetailsService);
+        return new LoginFailureHandler(userDetailsService, loginAttemptService);
     }
 }
