@@ -181,6 +181,8 @@
         <dependency>
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
+            <version>9.7.0</version>
+            <scope>compile</scope>
         </dependency>
         <dependency>
             <groupId>com.baomidou</groupId>
@@ -230,6 +232,16 @@
             <artifactId>bcprov-jdk18on</artifactId>
             <version>1.81</version>
         </dependency>
+        <dependency>
+            <!--
+                显式声明以覆盖 Vaadin 传递进来的 3.17.0：
+                3.17.0 的 FastDateFormat 在 JDK 25+ 上会触发
+                "Use of the three-letter time zone ID" 告警（LANG-1786），3.20.0 已修复。
+            -->
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+            <version>3.20.0</version>
+        </dependency>
     </dependencies>
 
     <build>
@@ -240,6 +252,7 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <mainClass>com.sl.Application</mainClass>
+                    <jvmArguments>--enable-native-access=ALL-UNNAMED</jvmArguments>
                 </configuration>
             </plugin>
             <plugin>
