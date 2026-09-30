@@ -92,6 +92,9 @@ public class RemoteFileView extends ViewBase {
 
     private transient ConnectionInfo presetHost;
 
+    /** 预置打开目录（可选）：从 compose 管理页跳转过来时是项目目录，省一次手动输路径。 */
+    private transient String presetDirectory;
+
     /** 上传大小上限（spring.servlet.multipart.max-file-size，默认 100MB），超限在客户端就弹窗拦截 */
     private final transient DataSize maxUploadSize;
 
@@ -113,6 +116,11 @@ public class RemoteFileView extends ViewBase {
 
     public void setPresetHost(ConnectionInfo info) {
         this.presetHost = info;
+    }
+
+    /** 预置打开目录；不设或为空时保持原行为（解析登录用户 home）。 */
+    public void setPresetDirectory(String directory) {
+        this.presetDirectory = directory;
     }
 
     public RemoteFileView(PureTextProperties pureTextProperties,
@@ -174,8 +182,14 @@ public class RemoteFileView extends ViewBase {
         openInitial();
     }
 
-    /** 打开页面先解析登录用户的 home（SFTP 会话的当前目录就是它），失败再退回根目录。 */
+    /** 打开页面先解析登录用户的 home（SFTP 会话的当前目录就是它），失败再退回根目录；
+     *  有预置目录（如 compose 项目目录）时直接进该目录，不绕 home 也不依赖 SFTP 会话。 */
     private void openInitial() {
+        String preset = StrUtil.trimToEmpty(presetDirectory);
+        if (!preset.isEmpty() && preset.startsWith("/")) {
+            getUI().ifPresent(ui -> navigate(preset));
+            return;
+        }
         getUI().ifPresent(ui -> new Thread(() -> {
             String home = "/";
             try {

@@ -8,6 +8,8 @@ import com.vaadin.flow.component.grid.Grid;
 import com.vaadin.flow.component.html.Anchor;
 import com.vaadin.flow.component.html.Hr;
 import com.vaadin.flow.component.html.Span;
+import com.vaadin.flow.component.icon.Icon;
+import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.textfield.PasswordField;
 import com.vaadin.flow.component.textfield.TextArea;
@@ -100,6 +102,18 @@ public final class UiFactory {
     public static Button rowDanger(String text, Runnable action) {
         Button button = rowAction(text, action);
         button.addThemeVariants(ButtonVariant.LUMO_ERROR);
+        return button;
+    }
+
+    /**
+     * 行内图标按钮：只显示图标不显示文字，悬浮出 tooltip，用于操作列里省空间/去重的次要动作
+     * （如「跳转到文件管理」——多行都写「文件管理」四个字既挤又重复）。
+     * 与 {@link #rowAction} 同一套 small+tertiary 主题，视觉上和相邻文字按钮对齐。
+     */
+    public static Button rowIcon(VaadinIcon icon, String tooltip, Runnable action) {
+        Button button = new Button(new Icon(icon), event -> action.run());
+        button.addThemeVariants(ButtonVariant.LUMO_SMALL, ButtonVariant.LUMO_TERTIARY, ButtonVariant.LUMO_ICON);
+        button.setTooltipText(tooltip);
         return button;
     }
 

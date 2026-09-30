@@ -279,8 +279,11 @@ public class DockerComposeView extends ViewBase {
             return badge;
         }).setHeader("状态").setAutoWidth(true);
         projectGrid.addColumn(ComposeProject::getContainerCountText).setHeader("容器").setAutoWidth(true);
-        projectGrid.addColumn(p -> StrUtil.nullToEmpty(p.getDescription())).setHeader("描述").setAutoWidth(true);
-        projectGrid.addColumn(ComposeProject::getCreatedBy).setHeader("创建人").setAutoWidth(true);
+        // 空值渲染成 —：描述留空的项目/外来项目（没有创建人）整格空白看起来像列坏了
+        projectGrid.addColumn(p -> StrUtil.emptyToDefault(p.getDescription(), "—"))
+                .setHeader("描述").setAutoWidth(true);
+        projectGrid.addColumn(p -> StrUtil.emptyToDefault(p.getCreatedBy(), "—"))
+                .setHeader("创建人").setAutoWidth(true);
         projectGrid.addColumn(p -> p.isManaged() ? "平台管理" : "外部项目").setHeader("来源").setAutoWidth(true);
         projectGrid.addComponentColumn(this::buildRowActions).setHeader("操作").setAutoWidth(true);
     }
@@ -295,6 +298,8 @@ public class DockerComposeView extends ViewBase {
         actions.add(UiFactory.small("停止", () -> confirmDown(project)));
         actions.add(UiFactory.small("容器", () -> showContainers(project)));
         actions.add(UiFactory.small("配置", () -> showFiles(project)));
+        actions.add(UiFactory.rowIcon(com.vaadin.flow.component.icon.VaadinIcon.FOLDER_OPEN_O,
+                "跳转到文件管理", () -> openFileMgmt(project)));
 
         Button delete = UiFactory.small("删除", () -> confirmDelete(project));
         delete.getElement().getThemeList().add("error");
@@ -607,6 +612,33 @@ public class DockerComposeView extends ViewBase {
     // ------------------------------------------------------------------
     // 容器列表
     // ------------------------------------------------------------------
+
+    /**
+     * 操作列的文件夹图标：跳到该目标机的「文件管理」页，直接落在项目目录——
+     * compose 弹窗只能编辑登记过的那几个 yml，改 .env、nginx conf 这类其它配置文件
+     * 还得去文件管理页，跳过去默认打开项目目录省一次手动输路径。
+     */
+    private void openFileMgmt(ComposeProject project) {
+        if (executor == null) {
+            Dialogs.warn("请先连接目标服务器");
+            return;
+        }
+        com.sl.ui.component.TabHost host = com.sl.ui.component.TabHost.current();
+        if (host == null) {
+            Dialogs.warn("当前页面不在主框架内，无法打开文件管理");
+            return;
+        }
+        ConnectionInfo info = executor.getInfo();
+        // 标题带项目名做去重键：每个项目各占一个文件管理标签（各自停在各自的目录），
+        // 重复点同一项目的图标是切回旧标签，不会越开越多
+        host.open("文件管理-" + info.getIdHost() + "-" + project.getName(), () -> {
+            com.sl.ui.remote.RemoteFileView view =
+                    applicationContext.getBean(com.sl.ui.remote.RemoteFileView.class);
+            view.setPresetHost(info);
+            view.setPresetDirectory(project.getDirectory());
+            return view;
+        });
+    }
 
     private void showContainers(ComposeProject project) {
         setBusy(true, "读取容器列表 …");
