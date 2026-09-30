@@ -655,7 +655,7 @@ public class DockerComposeView extends ViewBase {
     private void openFilesDialog(ComposeProject project, Map<String, String> files) {
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle("配置文件：" + project.getName());
-        dialog.setWidth("110px");
+        dialog.setWidth("1100px");
         dialog.setHeight("750px");
 
         com.vaadin.flow.component.combobox.ComboBox<String> fileCombo =
