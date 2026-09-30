@@ -231,6 +231,32 @@ CREATE TABLE IF NOT EXISTS `drawio_file` (
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------
+-- Table structure for compose_project（Docker-Compose 项目登记，Docker-Compose 管理页）
+--   平台上创建过的每个 compose 项目记一行，列表页数据源就是这张表（不再按根目录扫描），
+--   运行状态（是否在跑 / 容器数）每次点「刷新」时现查目标机。
+--   id_host       目标主机标识，格式 host:port
+--   name          compose 项目名（-p 的值，容器名/卷名前缀），同一台主机上唯一
+--   cd_directory  项目目录（目标机绝对路径）
+--   cd_files      参与叠加的 compose 文件名，逗号分隔，顺序即 -f 顺序
+--   id_user       创建人（users.id_user）；表格按"所有用户创建过的"展示，不按人过滤
+--   create_time   创建时间，字符串列 yyyy-MM-dd HH:mm:ss
+--
+-- 注意：这张表不需要手工执行本脚本，DbInitializer 启动时会自动建出来，
+-- 写在这里只是让表结构文档保持完整。
+-- ----------------------------
+DROP TABLE IF EXISTS `compose_project`;
+CREATE TABLE `compose_project` (
+    `id_host`       VARCHAR(64)  NOT NULL,
+    `name`          VARCHAR(64)  NOT NULL,
+    `cd_directory`  VARCHAR(255),
+    `cd_files`      VARCHAR(255),
+    `cd_description` VARCHAR(255),
+    `id_user`       VARCHAR(64),
+    `create_time`   VARCHAR(32),
+    PRIMARY KEY (`id_host`, `name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ----------------------------
 -- Table structure for app_setting（界面偏好 / 零散状态的通用 kv 表）
 --   setting_key    键，由调用方约定，例如 compose.pref.admin；主键
 --   setting_value  值，纯文本

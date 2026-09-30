@@ -2,16 +2,16 @@ package com.sl.ui.docker;
 
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
-import com.sl.docker.ComposePreferenceStore;
 import com.sl.docker.ComposeService;
 import com.sl.docker.DockerDaemonDownException;
 import com.sl.docker.DockerExecutor;
-import com.sl.docker.model.ComposeBaseDirEntry;
 import com.sl.docker.model.ComposeContainer;
 import com.sl.docker.model.ComposeProject;
-import com.sl.docker.model.ComposeUiPreference;
+import com.sl.entity.ComposeProjectEntity;
 import com.sl.entity.ConnectionInfo;
+import com.sl.mapper.ComposeProjectMapper;
 import com.sl.mapper.ConnectionInfoMapper;
+import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
@@ -20,17 +20,13 @@ import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.checkbox.Checkbox;
-import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.dialog.Dialog;
 import com.vaadin.flow.component.grid.Grid;
-import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
-import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.component.textfield.TextField;
-import com.vaadin.flow.server.VaadinSession;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
@@ -38,7 +34,9 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Service;
 
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -48,13 +46,17 @@ import java.util.function.Consumer;
 /**
  * Docker-Compose 管理。
  * <p>
+ * 项目清单来自登记表 {@code compose_project}（所有用户创建过的项目，不按人过滤），
+ * 不再按根目录扫描：连上目标机后读登记记录，运行状态（是否在跑 / 容器数）每次
+ * 点「刷新」时现查目标机并就地补齐。外来项目（{@code docker compose ls} 发现、
+ * 不是本系统创建的）同样会合并进列表，能看、能启停。
+ * <p>
  * 对应旧项目的 {@code DockerComposeComponent}（项目列表）+ {@code ComposeProjectWindow}
  * 的一部分（项目级生命周期动作、配置文件查看与编辑）。与旧实现的差别：
  * <ul>
  *   <li>项目级操作（up / down / restart）与容器列表直接放在列表行内，不再先开一层项目窗口——
  *       日常「重启一个项目」「看看跑起来没有」这类高频操作少一次点击；</li>
- *   <li>compose 文件的编辑收进同一个弹窗（多文件切换），改完保存即写回目标机；
- *       模板创建 / Git 同步 / 服务级 scale 等低频操作还在迁移队列。</li>
+ *   <li>compose 文件的编辑收进同一个弹窗（多文件切换），改完保存即写回目标机。</li>
  * </ul>
  * 连接模型与 {@link DockerMgmtView} 相同：每个标签独占一条 SSH 通道，
  * daemon 不在时不发命令，页面关闭自动断开。
@@ -68,18 +70,22 @@ public class DockerComposeView extends ViewBase {
     private static final Logger log = LoggerFactory.getLogger(DockerComposeView.class);
 
     private final transient ConnectionInfoMapper connectionInfoMapper;
+    private final transient ComposeProjectMapper composeProjectMapper;
     private final transient ApplicationContext applicationContext;
-    private final transient ComposePreferenceStore prefStore;
 
     // 工具条字段一律不带组件内 label：用 UiFactory.fieldRow 的水平「标签+控件」组合，
     // 天然与相邻按钮上下对齐（组件内 label 的排版已在全局 CSS 里废弃）。
-    private final ComboBox<ConnectionInfo> hostCombo = new ComboBox<>();
-    private final TextField baseDirField = UiFactory.textField();
-    /** 历史项目根目录下拉：这台机器上用过的根目录，选中即切换并刷新项目列表 */
-    private final com.vaadin.flow.component.combobox.ComboBox<ComposeBaseDirEntry> baseDirCombo =
+    private final com.vaadin.flow.component.combobox.ComboBox<ConnectionInfo> hostCombo =
             new com.vaadin.flow.component.combobox.ComboBox<>();
+    /**
+     * 项目根目录：只作为「新建项目」的默认存放位置（连接成功后预填目标机默认值），
+     * 不再决定列表内容——列表跟这个目录没关系，跟登记表有关系。
+     */
+    private final TextField baseDirField = UiFactory.textField();
     private final Button connectBtn = UiFactory.primary("连接", this::connect);
+    private final Button refreshBtn = UiFactory.button("刷新", this::reloadProjects);
     private final Button createBtn = UiFactory.button("新建项目", () -> openCreateDialog());
+    private final Button importBtn = UiFactory.button("添加已有项目", this::openImportDialog);
     private final Span busyLabel = new Span();
     private final Span envLabel = new Span();
     private final Span statusLabel = new Span();
@@ -89,22 +95,20 @@ public class DockerComposeView extends ViewBase {
     private List<ConnectionInfo> candidateHosts = new ArrayList<>();
     private ConnectionInfo presetHost;
     private boolean autoConnectPending;
-    /** 当前登录用户的 compose 偏好（上次主机 + 每台机器的历史根目录），连接成功时读一次，改动即写回 */
-    private transient ComposeUiPreference preference;
-    /** 程序性改动 baseDirCombo 时置位，避免它自己的监听器又去刷一遍列表 */
-    private boolean updatingBaseDirCombo;
 
     private transient DockerExecutor executor;
     private transient ComposeService service;
 
-    public DockerComposeView(ConnectionInfoMapper connectionInfoMapper, ApplicationContext applicationContext,
-                             ComposePreferenceStore prefStore) {
+    public DockerComposeView(ConnectionInfoMapper connectionInfoMapper,
+                             ComposeProjectMapper composeProjectMapper,
+                             ApplicationContext applicationContext) {
         this.connectionInfoMapper = connectionInfoMapper;
+        this.composeProjectMapper = composeProjectMapper;
         this.applicationContext = applicationContext;
-        this.prefStore = prefStore;
 
         add(title("Docker-Compose 管理"));
-        add(subtitle("扫描目标机上的 compose 项目，可启停、看容器、改配置。页面关闭时 SSH 通道自动断开。"));
+        add(subtitle("展示所有用户创建过的 compose 项目，可启停、看容器、改配置。"
+                + "运行状态点「刷新」现查目标机。页面关闭时 SSH 通道自动断开。"));
 
         add(buildConnectRow());
         envLabel.addClassName("docker-env-label");
@@ -131,30 +135,16 @@ public class DockerComposeView extends ViewBase {
         hostCombo.setPlaceholder("选择一台已配置的服务器");
         hostCombo.setItemLabelGenerator(item -> item.getIdHost() + " (" + item.getIdUser() + ")");
         hostCombo.setAllowCustomValue(false);
-        baseDirField.setWidth("200px");
-        baseDirField.setPlaceholder("留空用默认 ~/logviewer-compose");
-        baseDirField.addKeyDownListener(com.vaadin.flow.component.Key.ENTER, e -> reloadProjects());
+        baseDirField.setWidth("220px");
+        baseDirField.setPlaceholder("新建项目根目录，留空用 ~/logviewer-compose");
+        refreshBtn.setEnabled(false);
         createBtn.setEnabled(false);
-        baseDirCombo.setWidth("330px");
-        baseDirCombo.setPlaceholder("这台机器上用过的目录");
-        baseDirCombo.setTooltipText("选中即切换并刷新下面的项目列表；随扫描自动记住新目录");
-        baseDirCombo.setItemLabelGenerator(ComposeBaseDirEntry::caption);
-        baseDirCombo.addValueChangeListener(e -> {
-            if (updatingBaseDirCombo || e.getValue() == null) {
-                return;
-            }
-            String dir = StrUtil.trimToEmpty(e.getValue().getDir());
-            if (!dir.isEmpty() && !dir.equals(StrUtil.trimToEmpty(baseDirField.getValue()))) {
-                baseDirField.setValue(dir);
-                reloadProjects();
-            }
-        });
+        importBtn.setEnabled(false);
 
         HorizontalLayout row = new HorizontalLayout(
                 UiFactory.fieldRow("目标服务器", "80px", hostCombo),
                 UiFactory.fieldRow("项目根目录", "80px", baseDirField),
-                UiFactory.fieldRow("历史目录", "68px", baseDirCombo),
-                connectBtn, createBtn, busyLabel);
+                connectBtn, refreshBtn, createBtn, importBtn, busyLabel);
         row.setClassName("view-toolbar");
         row.setAlignItems(FlexComponent.Alignment.CENTER);
         row.setFlexGrow(1, busyLabel);
@@ -258,21 +248,13 @@ public class DockerComposeView extends ViewBase {
             executor = (DockerExecutor) parts[0];
             service = (ComposeService) parts[1];
             setBusy(false, "");
+            refreshBtn.setEnabled(true);
             createBtn.setEnabled(true);
+            importBtn.setEnabled(true);
             envLabel.setText("已连接 " + executor.hostLabel() + "　" + parts[2]);
             if (StrUtil.isBlank(baseDirField.getValue())) {
                 baseDirField.setValue(StrUtil.nullToEmpty((String) parts[3]));
             }
-            // 偏好按"主机:端口"记，连接成功先读一次、记下"上次用的这台机器"
-            String hostKey = executor.hostLabel();
-            try {
-                preference = prefStore.load(currentUser());
-                preference.setLastHost(hostKey);
-                prefStore.save(currentUser(), preference);
-            } catch (Exception e) {
-                log.warn("读写 compose 偏好失败：{}", e.getMessage());
-            }
-            refreshBaseDirCombo(hostKey);
             reloadProjects();
         }, e -> {
             setBusy(false, "");
@@ -281,7 +263,7 @@ public class DockerComposeView extends ViewBase {
     }
 
     // ------------------------------------------------------------------
-    // 项目列表
+    // 项目列表（登记表 + 目标机实时状态）
     // ------------------------------------------------------------------
 
     private void buildGrid() {
@@ -298,6 +280,7 @@ public class DockerComposeView extends ViewBase {
         }).setHeader("状态").setAutoWidth(true);
         projectGrid.addColumn(ComposeProject::getContainerCountText).setHeader("容器").setAutoWidth(true);
         projectGrid.addColumn(p -> StrUtil.nullToEmpty(p.getDescription())).setHeader("描述").setAutoWidth(true);
+        projectGrid.addColumn(ComposeProject::getCreatedBy).setHeader("创建人").setAutoWidth(true);
         projectGrid.addColumn(p -> p.isManaged() ? "平台管理" : "外部项目").setHeader("来源").setAutoWidth(true);
         projectGrid.addComponentColumn(this::buildRowActions).setHeader("操作").setAutoWidth(true);
     }
@@ -320,8 +303,59 @@ public class DockerComposeView extends ViewBase {
     }
 
     /**
-     * 新建 Compose 项目：弹窗里选模板/空白/上传 yml，创建成功后刷新列表
-     * （列表刷新本身会把新目录连同项目数记进历史下拉）。
+     * 刷新：读登记表里这台主机的全部项目（所有用户创建过的），再连一次目标机
+     * 取运行状态（容器数 / 是否在跑），外来项目一并合并展示。
+     */
+    private void reloadProjects() {
+        if (service == null) {
+            Dialogs.warn("请先连接目标服务器");
+            return;
+        }
+        String hostKey = executor.hostLabel();
+        setBusy(true, "正在读取项目状态 …");
+        runAsync("读取 compose 项目", () -> {
+            List<ComposeProjectEntity> records = composeProjectMapper.selectList(
+                    new QueryWrapper<ComposeProjectEntity>()
+                            .eq("id_host", hostKey)
+                            .orderByAsc("create_time"));
+            List<ComposeProject> registered = new ArrayList<>();
+            for (ComposeProjectEntity record : records) {
+                if (record == null || StrUtil.isBlank(record.getName())) {
+                    continue;
+                }
+                ComposeProject project = new ComposeProject();
+                project.setName(record.getName());
+                project.setDirectory(StrUtil.nullToEmpty(record.getCdDirectory()));
+                project.setDescription(StrUtil.nullToEmpty(record.getCdDescription()));
+                project.setManaged(true);
+                project.setCreatedAt(StrUtil.nullToEmpty(record.getCreateTime()));
+                project.setCreatedBy(StrUtil.nullToEmpty(record.getIdUser()));
+                List<String> files = new ArrayList<>();
+                for (String name : StrUtil.nullToEmpty(record.getCdFiles()).split(",")) {
+                    if (StrUtil.isNotBlank(name)) {
+                        files.add(name.trim());
+                    }
+                }
+                if (files.isEmpty()) {
+                    files.add(ComposeService.DEFAULT_FILE);
+                }
+                project.setFiles(files);
+                registered.add(project);
+            }
+            return service.listWithStatus(registered);
+        }, result -> {
+            setBusy(false, "");
+            @SuppressWarnings("unchecked")
+            List<ComposeProject> list = (List<ComposeProject>) result;
+            projectGrid.setItems(list);
+            long running = list.stream().filter(p -> "运行中".equals(p.getStatusLabel())).count();
+            statusLabel.setText("共 " + list.size() + " 个项目，运行中 " + running + " 个"
+                    + "（状态更新于 " + new SimpleDateFormat("HH:mm:ss").format(new Date()) + "）");
+        }, this::onComposeFailure);
+    }
+
+    /**
+     * 新建 Compose 项目：弹窗里选模板/空白/上传 yml，创建成功后写入登记表并刷新列表。
      */
     private void openCreateDialog() {
         if (service == null) {
@@ -332,56 +366,177 @@ public class DockerComposeView extends ViewBase {
             Dialogs.warn("权限不足，无法新建项目");
             return;
         }
-        new ComposeCreateDialog(service, StrUtil.trimToEmpty(baseDirField.getValue()),
-                project -> reloadProjects()).open();
+        // 请求线程上先取好创建人：onCreated 回调在 ComposeCreateDialog 的后台线程
+        // ui.access 里执行，那时再调 currentUser() 拿到的是 null（ThreadLocal）
+        String userId = currentUser();
+        new ComposeCreateDialog(service, StrUtil.trimToEmpty(baseDirField.getValue()), project -> {
+            saveProjectRecord(project, userId);
+            reloadProjects();
+        }).open();
     }
 
-    /** 历史目录下拉按当前主机刷新：把当前输入框里的目录也补进去（尚未记录过时）。 */
-    private void refreshBaseDirCombo(String hostKey) {
-        if (preference == null) {
-            return;
-        }
-        updatingBaseDirCombo = true;
+    /**
+     * 新建成功后写登记表；同主机同名（重复创建）就更新目录 / 文件 / 描述。
+     * <p>
+     * {@code userId} 必须由调用方在<b>请求线程</b>上取好传进来：本方法都从
+     * {@code ui.access} 回调（后台线程）里被调，{@link com.sl.security.CurrentUser}
+     * 读的 SecurityContextHolder 是 ThreadLocal，后台线程上取到的是 null
+     * （2026-09-30 「写入 compose 项目登记失败 … CurrentUser.get() is null」即此因）。
+     */
+    private void saveProjectRecord(ComposeProject project, String userId) {
         try {
-            List<ComposeBaseDirEntry> entries = new ArrayList<>(preference.dirsOf(hostKey));
-            String current = StrUtil.trimToEmpty(baseDirField.getValue());
-            if (!current.isEmpty() && entries.stream().noneMatch(e -> current.equals(e.getDir()))) {
-                entries.add(0, new ComposeBaseDirEntry(current, -1, null));
+            String hostKey = executor.hostLabel();
+            QueryWrapper<ComposeProjectEntity> wrapper = new QueryWrapper<ComposeProjectEntity>()
+                    .eq("id_host", hostKey)
+                    .eq("name", project.getName());
+            ComposeProjectEntity entity = composeProjectMapper.selectOne(wrapper);
+            if (entity == null) {
+                entity = new ComposeProjectEntity();
+                entity.setIdHost(hostKey);
+                entity.setName(project.getName());
+                entity.setIdUser(userId);
+                entity.setCreateTime(new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()));
+                entity.setCdDirectory(project.getDirectory());
+                entity.setCdFiles(String.join(",", project.getFiles()));
+                entity.setCdDescription(StrUtil.nullToEmpty(project.getDescription()));
+                composeProjectMapper.insert(entity);
+            } else {
+                entity.setCdDirectory(project.getDirectory());
+                entity.setCdFiles(String.join(",", project.getFiles()));
+                entity.setCdDescription(StrUtil.nullToEmpty(project.getDescription()));
+                composeProjectMapper.update(entity, wrapper);
             }
-            baseDirCombo.setItems(entries);
-            entries.stream()
-                    .filter(e -> current.equals(e.getDir()))
-                    .findFirst()
-                    .ifPresent(baseDirCombo::setValue);
-        } finally {
-            updatingBaseDirCombo = false;
+        } catch (Exception e) {
+            // 登记失败不拦创建：目标机上的项目已经建成了，只是列表暂时看不到
+            log.warn("写入 compose 项目登记失败：{}", e.getMessage());
+            Dialogs.warn("项目已创建，但写入登记表失败：" + reason(e));
         }
     }
 
-    private void reloadProjects() {
+    /**
+     * 添加已有项目：目标机上已经存在一个带 docker-compose.yml 的目录，
+     * 用户输入路径与描述，其余信息（项目名 = 目录名末段、配置文件清单）现查目标机获取，
+     * 校验通过后写登记表，让该项目进入列表正常管理。
+     */
+    private void openImportDialog() {
         if (service == null) {
             Dialogs.warn("请先连接目标服务器");
             return;
         }
-        String baseDir = StrUtil.trim(baseDirField.getValue());
-        setBusy(true, "正在扫描项目 …");
-        runAsync("扫描 compose 项目", () -> service.listProjects(baseDir), result -> {
-            setBusy(false, "");
-            List<ComposeProject> list = (List<ComposeProject>) result;
-            projectGrid.setItems(list);
-            long running = list.stream().filter(p -> "运行中".equals(p.getStatusLabel())).count();
-            statusLabel.setText("共 " + list.size() + " 个项目，运行中 " + running + " 个");
-            if (preference != null && service != null) {
-                String hostKey = executor.hostLabel();
-                try {
-                    preference.rememberDir(hostKey, baseDir, list.size());
-                    prefStore.save(currentUser(), preference);
-                } catch (Exception e) {
-                    log.warn("保存 compose 偏好失败：{}", e.getMessage());
-                }
-                refreshBaseDirCombo(hostKey);
+        if (!hasPermission(Constants.ADD)) {
+            Dialogs.warn("权限不足，无法添加项目");
+            return;
+        }
+        Dialog dialog = new Dialog();
+        dialog.setWidth("700px");
+        dialog.setHeaderTitle("添加已有项目");
+        TextField dirField = UiFactory.textField("项目目录", "目标机上的绝对路径，如 /opt/my-app","500px");
+        TextField descField = UiFactory.textField("项目描述", "可选，列表里能一眼认出来","500px");
+        Span hint = new Span("添加前会检查该目录下是否存在 docker-compose.yml；"
+                + "项目名取目录名的最后一段（自动转成 compose 合法字符）。");
+        hint.getStyle().set("font-size", "var(--lumo-font-size-xs)");
+        hint.getStyle().set("color", "var(--lumo-secondary-text-color)");
+        hint.getStyle().set("overflow-wrap", "anywhere");
+        VerticalLayout body = new VerticalLayout(dirField, descField, hint);
+        body.setPadding(false);
+        dialog.add(body);
+        Button cancel = UiFactory.button("取消", dialog::close);
+        Button add = UiFactory.primary("添加", () -> doImport(dialog, dirField.getValue(), descField.getValue()));
+        dialog.getFooter().add(cancel, add);
+        dialog.open();
+    }
+
+    /** 校验目录与 compose 文件在后台线程做；通过后关闭弹窗、写登记表并刷新列表。 */
+    private void doImport(Dialog dialog, String rawDir, String description) {
+        String dir = StrUtil.trimToEmpty(rawDir);
+        while (dir.length() > 1 && dir.endsWith("/")) {
+            dir = dir.substring(0, dir.length() - 1);
+        }
+        if (dir.isEmpty()) {
+            Dialogs.warn("请输入项目目录");
+            return;
+        }
+        String finalDir = dir;
+        // 请求线程上先取好用户：下面的回调在后台线程 ui.access 里执行，
+        // SecurityContextHolder（ThreadLocal）在那边是空的，currentUser() 会 NPE
+        String userId = currentUser();
+        setBusy(true, "检查项目目录 …");
+        runAsync("检查已有项目", () -> {
+            if (!service.directoryExists(finalDir)) {
+                return new Object[]{false, "目标机上不存在目录 " + finalDir, null};
             }
-        }, this::onComposeFailure);
+            DockerExecutor.CmdResult check = executor.exec(
+                    "[ -f " + DockerExecutor.q(finalDir + "/" + ComposeService.DEFAULT_FILE) + " ] && echo yes");
+            if (!check.getOutput().contains("yes")) {
+                return new Object[]{false,
+                        "目录 " + finalDir + " 下没有找到 docker-compose.yml，请确认路径后再添加", null};
+            }
+            String name = composeNameFromDir(finalDir);
+            try {
+                ComposeService.checkName(name);
+            } catch (Exception e) {
+                return new Object[]{false, "从目录名推不出合法项目名：" + reason(e), null};
+            }
+            List<String> files = service.detectComposeFiles(finalDir);
+            if (files.isEmpty()) {
+                files = List.of(ComposeService.DEFAULT_FILE);
+            }
+            ComposeProject project = new ComposeProject();
+            project.setName(name);
+            project.setDirectory(finalDir);
+            project.setDescription(StrUtil.trimToEmpty(description));
+            project.setFiles(files);
+            project.setManaged(true);
+            return new Object[]{true, null, project};
+        }, result -> {
+            Object[] parts = (Object[]) result;
+            if (!Boolean.TRUE.equals(parts[0])) {
+                setBusy(false, "");
+                Dialogs.warn((String) parts[1]);
+                return;
+            }
+            ComposeProject project = (ComposeProject) parts[2];
+            dialog.close();
+            setBusy(false, "");
+            saveProjectRecord(project, userId);
+            Dialogs.success("已添加项目 " + project.getName() + "（" + project.getDirectory()
+                    + "，配置文件：" + project.getFilesText() + "）");
+            reloadProjects();
+        }, e -> {
+            setBusy(false, "");
+            Dialogs.error("添加失败：" + reason(e));
+        });
+    }
+
+    /** 目录名末段 → compose 项目名：小写、非法字符换短横线、掐掉首尾短横线，最长 39 位。 */
+    private static String composeNameFromDir(String dir) {
+        String seg = dir;
+        int idx = seg.lastIndexOf('/');
+        if (idx >= 0) {
+            seg = seg.substring(idx + 1);
+        }
+        seg = seg.toLowerCase(java.util.Locale.ROOT).replaceAll("[^a-z0-9_-]+", "-");
+        while (seg.startsWith("-")) {
+            seg = seg.substring(1);
+        }
+        while (seg.endsWith("-")) {
+            seg = seg.substring(0, seg.length() - 1);
+        }
+        if (seg.length() > 39) {
+            seg = seg.substring(0, 39);
+        }
+        return seg;
+    }
+
+    /** 删除成功后把登记记录一并清掉，不然列表里会留一行永远"未启动"的死项目。 */
+    private void deleteProjectRecord(ComposeProject project) {
+        try {
+            composeProjectMapper.delete(new QueryWrapper<ComposeProjectEntity>()
+                    .eq("id_host", executor.hostLabel())
+                    .eq("name", project.getName()));
+        } catch (Exception e) {
+            log.warn("删除 compose 项目登记失败：{}", e.getMessage());
+        }
     }
 
     private void projectAction(String action, ThrowingTask task) {
@@ -440,6 +595,7 @@ public class DockerComposeView extends ViewBase {
                     runAsync("删除项目", () -> service.deleteProject(project, false, false, true), output -> {
                         setBusy(false, "");
                         Dialogs.info(StrUtil.emptyToDefault((String) output, "已删除"));
+                        deleteProjectRecord(project);
                         reloadProjects();
                     }, e -> {
                         setBusy(false, "");
@@ -499,8 +655,8 @@ public class DockerComposeView extends ViewBase {
     private void openFilesDialog(ComposeProject project, Map<String, String> files) {
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle("配置文件：" + project.getName());
-        dialog.setWidth("880px");
-        dialog.setHeight("680px");
+        dialog.setWidth("110px");
+        dialog.setHeight("750px");
 
         com.vaadin.flow.component.combobox.ComboBox<String> fileCombo =
                 new com.vaadin.flow.component.combobox.ComboBox<>();
@@ -508,17 +664,21 @@ public class DockerComposeView extends ViewBase {
         fileCombo.setWidth("320px");
         fileCombo.setAllowCustomValue(false);
 
-        TextArea editor = UiFactory.textArea();
-        editor.setWidthFull();
-        editor.setHeightFull();
-        editor.getElement().getStyle().set("font-family", "var(--lumo-font-family-monospace, monospace)");
-        editor.getElement().getStyle().set("font-size", "var(--lumo-font-size-xs)");
+        // 项目统一的 CodeMirror 代码编辑器，语法模式跟着所选文件扩展名走
+        CodeEditor editor = new CodeEditor();
 
         fileCombo.addValueChangeListener(e -> {
+            editor.setMode(CodeEditor.suggestMode(e.getValue()));
             String content = files.get(e.getValue());
             editor.setValue(content == null ? "" : content);
         });
-        fileCombo.setValue(files.keySet().iterator().next());
+        // ComboBox 对"值没变"的 setValue 不发事件（ComposeCreateDialog.refreshFileCombo
+        // 里同一条注释）：初始选中第一项时显式同步编辑器，不依赖监听器碰运气
+        String first = files.keySet().iterator().next();
+        fileCombo.setValue(first);
+        editor.setMode(CodeEditor.suggestMode(first));
+        String firstContent = files.get(first);
+        editor.setValue(firstContent == null ? "" : firstContent);
 
         Button save = UiFactory.primary("保存到服务器", () -> {
             String fileName = fileCombo.getValue();
@@ -545,6 +705,10 @@ public class DockerComposeView extends ViewBase {
         body.setPadding(false);
         body.setSpacing(false);
         body.getStyle().set("gap", "6px");
+        // 编辑器高度靠 flex-grow 撑（CodeEditor 的 host 是 display:block + min-height:0）；
+        // 纵向 flex 里写 height:100% 不扣兄弟行高度，会把工具行顶出弹窗（ComposeCreateDialog 同坑）
+        body.setDefaultHorizontalComponentAlignment(FlexComponent.Alignment.STRETCH);
+        body.setFlexGrow(1, editor);
         dialog.add(body);
         dialog.getFooter().add(UiFactory.button("关闭", dialog::close));
         dialog.open();
@@ -610,9 +774,9 @@ public class DockerComposeView extends ViewBase {
         return user != null && user.hasPermission(code);
     }
 
-    /** 偏好按登录用户隔离（AppSettingStore 的 kv 键后缀）。 */
+    /** 新建项目的创建人记登录用户；列表展示不按人隔离。 */
     private static String currentUser() {
-        return com.sl.security.CurrentUser.idOrSystemUser();
+        return com.sl.security.CurrentUser.get().getUserId();
     }
 
     @Override
@@ -627,8 +791,9 @@ public class DockerComposeView extends ViewBase {
             executor = null;
             service = null;
         }
+        refreshBtn.setEnabled(false);
         createBtn.setEnabled(false);
-        baseDirCombo.setItems();
+        importBtn.setEnabled(false);
     }
 
     @FunctionalInterface

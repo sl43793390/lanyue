@@ -61,14 +61,14 @@ public final class CurrentUser {
     }
 
     /**
-     * 当前登录名，取不到时回落到操作系统用户名。
+     * 当前登录名，未登录（后台线程、启动任务等没有 Security 上下文的场景）兜底返回 {@code "system"}。
      * <p>
-     * 给"需要给某个文件/目录起个跟人相关的名字"这种场景用（旧代码里是
-     * {@code <user.dir>/<登录名>.properties}）。回落而不是抛异常，是因为这类调用
-     * 经常发生在启动期或后台线程，那里本来就"没有当前用户"，报错没有意义。
+     * 给 per-user 配置文件名（{@code Util.saveUserConfigToFile} 等）和
+     * {@code id_user} 落库这类「必须有值」的场景用——调用方不想再判一次 null。
      */
     public static String idOrSystemUser() {
         String id = id();
-        return null != id ? id : System.getProperty("user.name");
+        return null == id ? "system" : id;
     }
+
 }

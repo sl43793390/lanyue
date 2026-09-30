@@ -116,6 +116,24 @@ public class DbInitializer implements ApplicationRunner {
             new String[] {"id_file"});
 
     /**
+     * Docker-Compose 项目登记（Docker-Compose 管理）。
+     * 平台上创建过的每个 compose 项目记一行：项目列表页的数据源就是这张表
+     * （不再按根目录扫描），运行状态每次刷新时现查目标机。
+     * 复合主键 (id_host, name)：同一台主机上 compose 项目名唯一（-p 的值），
+     * 跨主机天然隔离。cd_files 存逗号拼接的文件名，顺序即 -f 叠加顺序。
+     */
+    private static final TableDef COMPOSE_PROJECT = new TableDef("compose_project",
+            new Object[][] {
+                    {"id_host", 64, true},
+                    {"name", 64, true},
+                    {"cd_directory", 255, false},
+                    {"cd_files", 255, false},
+                    {"cd_description", 255, false},
+                    {"id_user", 64, false},
+                    {"create_time", 32, false}},
+            new String[] {"id_host", "name"});
+
+    /**
      * 启动时逐张兜底的全部表，业务表与 demo.sql / demo-mysql8.sql 逐表逐列对应。
      * <p>
      * 改表结构时**三处同步**：这里的定义、demo.sql、demo-mysql8.sql。
@@ -189,7 +207,8 @@ public class DbInitializer implements ApplicationRunner {
                             {"cd_description", 255, false}},
                     new String[] {"id_host", "tomcat_id"}),
             SCRIPT_MGMT,
-            DRAWIO_FILE};
+            DRAWIO_FILE,
+            COMPOSE_PROJECT};
 
     /** 一张表的建表定义：表名、列（{列名, 长度, 是否 NOT NULL}）、主键列。 */
     private static final class TableDef {

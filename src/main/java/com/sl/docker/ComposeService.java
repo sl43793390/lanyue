@@ -332,11 +332,26 @@ public class ComposeService {
     public List<ComposeProject> listProjects(String baseDir) throws IOException {
         executor.ensureDaemonReady();
         List<ComposeProject> managed = loadManagedProjects(baseDir);
-        fillProjectMeta(managed);
+        return listWithStatus(managed);
+    }
+
+    /**
+     * 按<b>调用方给定的项目清单</b>补齐运行状态：批量取服务数 / .env、一次 docker ps 拿全部
+     * compose 容器，再合并 {@code docker compose ls} 发现的外来项目。
+     * <p>
+     * 与 {@link #listProjects(String)} 的区别是项目清单不来自「扫根目录下的元信息文件」，
+     * 而是来自 {@code compose_project} 登记表——页面要展示的是所有用户创建过的项目，
+     * 根目录里扫到什么不该决定列表里有什么。
+     *
+     * @param registered 登记过的项目（目录 + 文件清单），方法内会就地补上状态字段
+     */
+    public List<ComposeProject> listWithStatus(List<ComposeProject> registered) throws IOException {
+        executor.ensureDaemonReady();
+        fillProjectMeta(registered);
         Map<String, List<ComposeContainer>> containersByProject = allComposeContainers();
 
         Map<String, ComposeProject> merged = new LinkedHashMap<String, ComposeProject>();
-        for (ComposeProject project : managed) {
+        for (ComposeProject project : registered) {
             merged.put(project.getName(), project);
         }
 
@@ -1528,7 +1543,11 @@ public class ComposeService {
         StringBuilder script = new StringBuilder("set +e; ");
         for (String file : project.getFiles()) {
             script.append("printf '").append(MARK_META).append("%s\\n' ").append(DockerExecutor.q(file)).append("; ");
-            script.append("cat ").append(DockerExecutor.q(project.getDirectory() + "/" + file))
+            // 外来项目（docker compose ls 发现）的文件清单是绝对路径（ConfigFiles 原样拆出来的），
+            // 再拼一次目录就变成 /dir//abs/path/x.yml，cat 永远落空，弹窗里就是一片空白。
+            // 相对路径才需要拼项目目录，绝对路径原样使用。
+            String path = file.startsWith("/") ? file : project.getDirectory() + "/" + file;
+            script.append("cat ").append(DockerExecutor.q(path))
                     .append(" 2>/dev/null; printf '\\n'; ");
         }
         DockerExecutor.CmdResult cmdResult = executor.exec(script.toString());

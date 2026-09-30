@@ -56,6 +56,8 @@ public class ComposeProject implements Serializable {
     private boolean hasFailed;
 
     private String createdAt = "";
+    /** 创建人（compose_project.id_user），登记表带出来的展示信息；外来项目为空 */
+    private String createdBy = "";
     private boolean envFilePresent;
 
     public void resolveStatus() {
@@ -255,6 +257,14 @@ public class ComposeProject implements Serializable {
 
     public void setCreatedAt(String createdAt) {
         this.createdAt = StrUtil.emptyToDefault(createdAt, "");
+    }
+
+    public String getCreatedBy() {
+        return createdBy;
+    }
+
+    public void setCreatedBy(String createdBy) {
+        this.createdBy = StrUtil.emptyToDefault(createdBy, "");
     }
 
     public boolean isEnvFilePresent() {
