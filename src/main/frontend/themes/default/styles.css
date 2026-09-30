@@ -690,13 +690,27 @@ vaadin-text-area[has-label]::part(label) {
    见 UiFactory.rowAction 注释）；删除按钮走 error 主题给红底红字。
    ============================================================ */
 .row-actions {
-    gap: 20px;
+    gap: 28px;
     align-items: center;
 }
 
 .row-actions vaadin-button {
     background-color: var(--lumo-contrast-5pct);
     border-radius: var(--lumo-border-radius-s);
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+/* 悬浮加深一档，让鼠标位置可感知；禁用钮不响应悬浮 */
+.row-actions vaadin-button:not([disabled]):hover {
+    background-color: var(--lumo-contrast-10pct);
+}
+
+.row-actions vaadin-button[theme~="error"]:not([disabled]):hover {
+    background-color: var(--lumo-error-color-20pct);
+}
+
+.row-actions vaadin-button[theme~="success"]:not([disabled]):hover {
+    background-color: var(--lumo-success-color-20pct);
 }
 
 .row-actions vaadin-button[theme~="error"] {

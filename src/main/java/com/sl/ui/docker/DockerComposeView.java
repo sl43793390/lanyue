@@ -291,7 +291,8 @@ public class DockerComposeView extends ViewBase {
     private com.vaadin.flow.component.Component buildRowActions(ComposeProject project) {
         HorizontalLayout actions = new HorizontalLayout();
         actions.setSpacing(false);
-        actions.getStyle().set("gap", "2px");
+        // 挂 row-actions 让操作列按钮统一走 styles.css 的间距与悬浮加深样式
+        actions.addClassName("row-actions");
 
         actions.add(UiFactory.small("启动", () -> projectAction("启动项目 " + project.getName(), () -> service.up(project, null, false, false, true))));
         actions.add(UiFactory.small("重启", () -> projectAction("重启项目 " + project.getName(), () -> service.redeploy(project, false))));
@@ -652,6 +653,7 @@ public class DockerComposeView extends ViewBase {
 
             Grid<ComposeContainer> grid = UiFactory.grid(ComposeContainer.class);
             grid.setItems(containers);
+            grid.setSelectionMode(Grid.SelectionMode.NONE);
             grid.addColumn(ComposeContainer::getService).setHeader("服务").setAutoWidth(true);
             grid.addColumn(ComposeContainer::getName).setHeader("容器名").setAutoWidth(true);
             grid.addColumn(ComposeContainer::getStateLabel).setHeader("状态").setAutoWidth(true);
