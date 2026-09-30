@@ -994,5 +994,5 @@ vaadin-text-area[has-label]::part(label) {
    行底色被单元格背景盖住。选中行的背景图在 cell 之上，不受影响。
    ------------------------------------------------------------------ */
 vaadin-grid::part(odd-row-cell) {
-    background-color: #eaf2ff;
+    background-color: #f0fbee;
 }
