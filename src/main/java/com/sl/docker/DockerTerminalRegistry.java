@@ -47,7 +47,13 @@ public final class DockerTerminalRegistry {
          * 这正是「多个容器合并显示 + 颜色区分」要的效果。代价是输出里会带上
          * 我们敲进去的那条命令行（pty 回显），反而方便用户核对跑的是什么。
          */
-        COMPOSE_LOGS
+        COMPOSE_LOGS,
+        /**
+         * 一键安装 Docker：SSH exec 通道（无 tty）跑整条安装命令，输出边产出边
+         * 推给 xterm，脚本自带 {@code DOCKER_INSTALL_RESULT=OK/FAILED} 结果标记，
+         * EOF 时由 websocket 侧解析并回告页面。
+         */
+        INSTALL
     }
 
     public static final class Spec {
@@ -64,6 +70,8 @@ public final class DockerTerminalRegistry {
         private final boolean timestamps;
         /** EXEC 用：容器内的 shell 路径 */
         private final String shell;
+        /** INSTALL 用：要在目标机上完整执行的安装命令（含 sudo 前缀与整段脚本） */
+        private final String installCommand;
 
         /* ---- COMPOSE_LOGS 用 ---- */
         /** 探测到的 compose 命令（{@code docker compose} 或 {@code docker-compose}）/ 或项目目录 */
@@ -98,6 +106,7 @@ public final class DockerTerminalRegistry {
             this.tailLines = tailLines;
             this.timestamps = timestamps;
             this.shell = StrUtil.emptyToDefault(shell, "/bin/sh");
+            this.installCommand = "";
             this.expireAt = System.currentTimeMillis() + TOKEN_TTL_MS;
         }
 
@@ -116,10 +125,29 @@ public final class DockerTerminalRegistry {
             this.tailLines = tailLines;
             this.timestamps = timestamps;
             this.shell = "/bin/sh";
+            this.installCommand = "";
             this.projectDir = StrUtil.emptyToDefault(projectDir, "");
             this.composeFiles = (null == composeFiles) ? new java.util.ArrayList<String>() : composeFiles;
             this.projectName = StrUtil.emptyToDefault(projectName, "");
             this.composeService = StrUtil.emptyToDefault(composeService, "");
+            this.expireAt = System.currentTimeMillis() + TOKEN_TTL_MS;
+        }
+
+        /**
+         * INSTALL 专用构造：{@code installCommand} 是完整的一条远端命令
+         * （{@link DockerExecutor#buildInstallCommand} 生成，可能是
+         * {@code sudo -n bash -c '整段脚本'}），websocket 建连时直接 exec。
+         */
+        public Spec(Kind kind, ConnectionInfo info, String installCommand) {
+            this.kind = kind;
+            this.info = info;
+            this.dockerCommand = "docker";
+            this.containerId = "";
+            this.containerName = null == info ? "" : info.getIdHost();
+            this.tailLines = 0;
+            this.timestamps = false;
+            this.shell = "/bin/sh";
+            this.installCommand = StrUtil.emptyToDefault(installCommand, "");
             this.expireAt = System.currentTimeMillis() + TOKEN_TTL_MS;
         }
 
@@ -149,6 +177,39 @@ public final class DockerTerminalRegistry {
 
         public String getShell() {
             return shell;
+        }
+
+        /** INSTALL 模式要执行的完整安装命令 */
+        public String getInstallCommand() {
+            return installCommand;
+        }
+
+        /** 安装脚本执行完毕（EOF）后的回调，页面用它解锁「关闭」按钮并重探 daemon */
+        public interface CompleteListener {
+            void onComplete(boolean success, String outputTail);
+        }
+
+        /**
+         * 安装完成回调。在 websocket 读线程上触发，回调里必须自己切回 UI 线程。
+         * 触发一次即清空；无论成功失败都要触发，否则页面关闭按钮会一直锁着。
+         */
+        private transient volatile CompleteListener completeListener;
+
+        public void setCompleteListener(CompleteListener listener) {
+            this.completeListener = listener;
+        }
+
+        public void fireComplete(boolean success, String outputTail) {
+            CompleteListener listener = completeListener;
+            completeListener = null;
+            if (null == listener) {
+                return;
+            }
+            try {
+                listener.onComplete(success, outputTail);
+            } catch (RuntimeException e) {
+                log.warn("docker 安装完成回调出错：{}", e.getMessage());
+            }
         }
 
         /** 只读日志流要跑的完整命令 */

@@ -4,6 +4,7 @@ import cn.hutool.core.io.IoUtil;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
+import com.sl.docker.DockerInstallScript;
 import com.sl.docker.DockerTerminalRegistry;
 import com.sl.entity.ConnectionInfo;
 import com.sl.util.SSHClientUtil;
@@ -20,6 +21,7 @@ import jakarta.websocket.OnError;
 import jakarta.websocket.OnMessage;
 import jakarta.websocket.OnOpen;
 import jakarta.websocket.server.ServerEndpoint;
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URLDecoder;
@@ -277,6 +279,8 @@ public class DockerTermHandler {
             ConnectionInfo info = spec.getInfo();
             if (DockerTerminalRegistry.Kind.LOGS == spec.getKind()) {
                 openLogsChannel(info);
+            } else if (DockerTerminalRegistry.Kind.INSTALL == spec.getKind()) {
+                openInstallChannel(info);
             } else {
                 // EXEC 与 COMPOSE_LOGS 都要 tty（前者为了交互，后者为了让 compose 给日志着色）
                 openPtyChannel(info);
@@ -295,6 +299,26 @@ public class DockerTermHandler {
             }
             sendNotice(session, "info", "日志跟踪已开始（docker logs -f --tail " + spec.getTailLines() + "）。"
                     + "该视图只读；搜索用 Ctrl+F，导出用工具栏的「导出」。");
+        }
+
+        /**
+         * INSTALL 模式：无 tty 的 SSH exec 通道直接跑整条安装命令，输出边产出边推给
+         * xterm。不开 pty 的原因与 LOGS 相同——安装脚本非交互（DEBIAN_FRONTEND 已固定），
+         * 开 pty 反而会把那条很长的 {@code bash -c} 命令回显一屏。脚本自带结果标记，
+         * EOF 时在 {@link #finishInstall} 里解析并回告页面。
+         */
+        private void openInstallChannel(ConnectionInfo info) throws Exception {
+            this.ssh = SSHClientUtil.connect(info);
+            try {
+                this.logStream = ssh.openCommandStream(spec.getInstallCommand() + " 2>&1");
+            } catch (Exception e) {
+                // 建通道失败就把这条 ssh 连接关掉，别留半条连接挂着
+                ssh.closeConnection();
+                this.ssh = null;
+                throw e;
+            }
+            sendNotice(session, "info", "安装脚本已下发，正在目标机上执行（下方为实时输出）。"
+                    + "安装通常需要 1~5 分钟，期间请勿关闭页面。");
         }
 
         private void openPtyChannel(ConnectionInfo info) throws Exception {
@@ -342,7 +366,8 @@ public class DockerTermHandler {
         }
 
         void start() throws Exception {
-            if (DockerTerminalRegistry.Kind.LOGS != spec.getKind()) {
+            if (DockerTerminalRegistry.Kind.EXEC == spec.getKind()
+                    || DockerTerminalRegistry.Kind.COMPOSE_LOGS == spec.getKind()) {
                 // sshj 的 startShell() 已完成通道建立，直接把 docker 命令当成用户输入写进去；
                 // exec 那条末尾的 exit 会把整个 shell 一起收掉
                 this.execOutput.write((startupCommand() + "\n").getBytes(StandardCharsets.UTF_8));
@@ -390,19 +415,57 @@ public class DockerTermHandler {
 
         @Override
         public void run() {
-            InputStream in = DockerTerminalRegistry.Kind.LOGS == spec.getKind() ? logStream : execInput;
+            boolean streamMode = DockerTerminalRegistry.Kind.LOGS == spec.getKind()
+                    || DockerTerminalRegistry.Kind.INSTALL == spec.getKind();
+            InputStream in = streamMode ? logStream : execInput;
+            // INSTALL 模式要留一份输出尾巴，EOF 时解析安装结果标记回告页面
+            ByteArrayOutputStream captured = DockerTerminalRegistry.Kind.INSTALL == spec.getKind()
+                    ? new ByteArrayOutputStream() : null;
             byte[] buffer = new byte[8192];
             try {
                 int len;
                 while ((len = in.read(buffer)) != -1) {
                     sendBinary(session, buffer, len);
+                    if (captured != null) {
+                        captured.write(buffer, 0, len);
+                        if (captured.size() > 256 * 1024) {
+                            // 只保留最后 128K：apt/yum 的输出可能很大，全量留着没意义
+                            byte[] all = captured.toByteArray();
+                            captured.reset();
+                            captured.write(all, all.length - 128 * 1024, 128 * 1024);
+                        }
+                    }
                 }
             } catch (Exception e) {
                 log.info("docker 终端读线程结束：{}", e.getMessage());
                 sendNotice(session, "err", "会话已结束：" + e.getMessage());
             } finally {
+                if (captured != null) {
+                    finishInstall(captured);
+                }
                 destroy(session);
             }
+        }
+
+        /**
+         * 安装脚本执行到 EOF（正常跑完、脚本 exit、或通道中断）之后收尾：
+         * 按 {@link DockerInstallScript#RESULT_OK} 标记判定成败，先给终端发一条
+         * 终态通知（terminal.html 用绿色展示并把状态栏标成「已结束」），再回告页面
+         * 解锁「关闭」按钮并触发 daemon 重探测。无论成败都要 fireComplete，
+         * 否则页面的关闭按钮会永远锁着。
+         */
+        private void finishInstall(ByteArrayOutputStream captured) {
+            String output;
+            try {
+                output = captured.toString("UTF-8");
+            } catch (Exception e) {
+                output = "";
+            }
+            boolean ok = output.contains(DockerInstallScript.RESULT_OK);
+            sendNotice(session, ok ? "end" : "err",
+                    ok ? "安装脚本执行完成，docker 已就绪。"
+                       : "安装脚本已结束，但未确认安装成功，请根据上方输出排查。");
+            spec.fireComplete(ok, output);
         }
 
         private void closeChannelsQuietly() {

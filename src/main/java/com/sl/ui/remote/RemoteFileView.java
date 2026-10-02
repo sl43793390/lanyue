@@ -104,6 +104,9 @@ public class RemoteFileView extends ViewBase {
     /** 开 SSH 终端标签要用：从容器里取 SshTerminalView 原型 bean */
     private final transient org.springframework.context.ApplicationContext applicationContext;
 
+    /** 文件分发弹窗：把当前文件批量分发到某个分组的其它机器 */
+    private final transient FileDistributeDialog distributeDialog;
+
     private final TextField pathField = new TextField();
     private final Span statusLabel = new Span();
     private final Grid<FileRow> grid = UiFactory.grid(FileRow.class);
@@ -125,10 +128,13 @@ public class RemoteFileView extends ViewBase {
 
     public RemoteFileView(PureTextProperties pureTextProperties,
                           org.springframework.context.ApplicationContext applicationContext,
-                          @Value("${spring.servlet.multipart.max-file-size:100MB}") DataSize maxUploadSize) {
+                          @Value("${spring.servlet.multipart.max-file-size:100MB}") DataSize maxUploadSize,
+                          com.sl.mapper.ConnectionInfoMapper connectionInfoMapper,
+                          com.sl.mapper.ServerGroupMapper serverGroupMapper) {
         this.pureText = pureTextProperties;
         this.applicationContext = applicationContext;
         this.maxUploadSize = maxUploadSize;
+        this.distributeDialog = new FileDistributeDialog(connectionInfoMapper, serverGroupMapper);
     }
 
     private boolean built = false;
@@ -242,6 +248,8 @@ public class RemoteFileView extends ViewBase {
             if (pureText.isEditable(row.name(), row.size())) {
                 actions.add(UiFactory.rowAction("编辑", () -> openEditor(row)));
             }
+            // 分发到某个分组的其它机器
+            actions.add(UiFactory.rowAction("分发", () -> openDistribute(row)));
         }
         actions.add(UiFactory.rowAction("重命名", () -> promptRename(row)));
         actions.add(UiFactory.rowDanger("删除", () -> confirmDelete(row)));
@@ -250,6 +258,21 @@ public class RemoteFileView extends ViewBase {
             actions.add(buildUpload(row.path()));
         }
         return actions;
+    }
+
+    // ------------------------------------------------------------------
+    // 文件分发（把当前文件批量发到某个分组的其它机器）
+    // ------------------------------------------------------------------
+
+    /** 打开分发弹窗。权限与 UI 状态（当前行、当前目录）都在请求线程上取好再传进去。 */
+    private void openDistribute(FileRow row) {
+        if (!hasPermission(Constants.UPLOAD)) {
+            Dialogs.warn("权限不足，无法分发文件");
+            return;
+        }
+        getUI().ifPresent(ui -> distributeDialog.open(
+                new FileDistributeDialog.SourceFile(row.name(), row.path(), row.size()),
+                presetHost, currentPath, ui, this::ensureSsh, () -> navigate(currentPath)));
     }
 
     // ------------------------------------------------------------------

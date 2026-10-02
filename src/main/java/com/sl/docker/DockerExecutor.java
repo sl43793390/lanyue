@@ -440,9 +440,11 @@ public class DockerExecutor implements Closeable {
         if (!before.canInstallDocker()) {
             throw new IOException(before.installBlockedReason());
         }
-        String command = (before.isRoot() ? "" : "sudo -n ") + "bash -c " + q(DockerInstallScript.script());
-        log.info("开始为 {} 安装 docker：登录用户 {}（uid={}），包管理器按 os-release 分流",
-                hostLabel(), before.getLoginUser(), before.getUid());
+        Distro distro = probeDistro();
+        String command = buildInstallCommand(before, distro);
+        log.info("开始为 {} 安装 docker：登录用户 {}（uid={}），系统 {}，使用 {}",
+                hostLabel(), before.getLoginUser(), before.getUid(), distro.prettyName(),
+                DockerInstallScript.variantLabel(distro.id(), distro.versionId()));
 
         CmdResult result = exec(command);
         StringBuilder report = new StringBuilder();
@@ -465,6 +467,38 @@ public class DockerExecutor implements Closeable {
             report.append("命令前缀：`").append(commandPrefix).append("`\n");
         }
         return new DockerActionResult(after.isDockerInstalled(), report.toString(), after);
+    }
+
+    /** 发行版探测结果：/etc/os-release 的 ID / VERSION_ID / PRETTY_NAME */
+    public record Distro(String id, String versionId, String prettyName) {
+    }
+
+    /**
+     * 探测目标机发行版，一次 SSH 往返。「一键安装」弹窗打开时调用：
+     * 按结果从 {@link DockerInstallScript#scriptFor} 选专用脚本，
+     * 读不到时按 unknown 处理，调用方回落通用脚本。
+     */
+    public Distro probeDistro() throws IOException {
+        ensureOpen();
+        CmdResult result = exec(". /etc/os-release 2>/dev/null; "
+                + "echo \"OS_ID=${ID:-unknown}\"; echo \"OS_VER=${VERSION_ID:-}\"; echo \"OS_NAME=${PRETTY_NAME:-unknown}\"");
+        Map<String, String> map = parseKeyValues(result.getOutput());
+        return new Distro(
+                StrUtil.emptyToDefault(map.get("OS_ID"), "unknown"),
+                StrUtil.emptyToDefault(map.get("OS_VER"), ""),
+                StrUtil.emptyToDefault(map.get("OS_NAME"), "unknown"));
+    }
+
+    /**
+     * 「一键安装」要在目标机上执行的完整命令：按发行版选脚本（与确认弹窗里
+     * 预览的是<b>同一份</b>），非 root 加 {@code sudo -n}，整段脚本转义后交给
+     * {@code bash -c}。页面的实时安装终端与 {@link #installDocker()} 共用这一份。
+     */
+    public String buildInstallCommand(DockerDaemonStatus before, Distro distro) {
+        String script = DockerInstallScript.scriptFor(
+                null == distro ? "unknown" : distro.id(),
+                null == distro ? "" : distro.versionId());
+        return (before.isRoot() ? "" : "sudo -n ") + "bash -c " + q(script);
     }
 
     /** 轮询等待 daemon 就绪；只在用户点了「启动」之后走，次数有上限 */

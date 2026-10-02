@@ -343,85 +343,191 @@ public class DockerMgmtView extends ViewBase {
     }
 
     /**
-     * 一键安装 Docker：先弹确认窗把要执行的脚本原文摆出来（内置脚本，不做暗箱操作），
-     * 用户确认后在后台执行，完成后把安装日志原样展示并重新探测 daemon。
+     * 一键安装 Docker 入口：点按钮时先在后台探测发行版，然后弹确认窗，
+     * 编辑器里展示的就是「会在这台机器上跑的那份脚本」（按系统选的专用脚本，
+     * 不做暗箱操作）。
      */
     private void installDockerRequested() {
         if (executor == null || executor.isClosed()) {
             Dialogs.warn("请先连接目标服务器");
             return;
         }
-        DockerDaemonStatus status = executor.currentDaemonStatus();
-        if (status != null && !status.canInstallDocker()) {
-            Dialogs.warn(status.installBlockedReason());
+        DockerExecutor current = executor;
+        DockerDaemonStatus cached = current.currentDaemonStatus();
+        if (cached != null && !cached.canInstallDocker()) {
+            Dialogs.warn(cached.installBlockedReason());
             return;
         }
+        setBusy(true, "正在识别目标系统版本 …");
+        runAsync("识别目标系统", () -> {
+            DockerDaemonStatus status = cached != null ? cached : current.probeDaemon(true);
+            DockerExecutor.Distro distro = current.probeDistro();
+            return new Object[]{status, distro,
+                    DockerInstallScript.scriptFor(distro.id(), distro.versionId()),
+                    DockerInstallScript.variantLabel(distro.id(), distro.versionId())};
+        }, result -> {
+            setBusy(false, "");
+            Object[] parts = (Object[]) result;
+            showInstallConfirmDialog((DockerDaemonStatus) parts[0], (DockerExecutor.Distro) parts[1],
+                    (String) parts[2], (String) parts[3]);
+        }, e -> {
+            setBusy(false, "");
+            Dialogs.error("识别系统版本失败：" + StrUtil.emptyToDefault(e.getMessage(), "未知错误"));
+        });
+    }
 
+    /**
+     * 安装确认弹窗：目标机信息 + 识别到的发行版 + 脚本原文（统一 CodeEditor，
+     * shell 语法高亮、只读）。确认后进入实时安装终端。
+     */
+    private void showInstallConfirmDialog(DockerDaemonStatus status, DockerExecutor.Distro distro,
+                                          String script, String scriptLabel) {
+        if (executor == null || executor.isClosed()) {
+            return;
+        }
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle("一键安装 Docker");
         dialog.setWidth("980px");
+        dialog.setHeight("800px");
 
         Span target = new Span("目标服务器：" + executor.hostLabel()
-                + (status == null ? "" : "　登录用户 " + status.getLoginUser() + "（uid=" + status.getUid() + "）"
-                + "　执行方式：" + status.installCommandPreview()));
+                + "　登录用户 " + status.getLoginUser() + "（uid=" + status.getUid() + "）"
+                + "　执行方式：" + status.installCommandPreview());
         target.getStyle().set("overflow-wrap", "anywhere");
 
-        TextArea scriptArea = UiFactory.textArea();
-        scriptArea.setValue(DockerInstallScript.script());
-        scriptArea.setReadOnly(true);
-        scriptArea.setWidthFull();
-        scriptArea.setHeight("420px");
-        scriptArea.getElement().getStyle().set("font-family", "var(--lumo-font-family-monospace, monospace)");
-        scriptArea.getElement().getStyle().set("font-size", "var(--lumo-font-size-xs)");
+        Span distroLabel = new Span("已识别系统：" + distro.prettyName()
+                + "（ID=" + distro.id()
+                + " VERSION_ID=" + (distro.versionId().isEmpty() ? "?" : distro.versionId())
+                + "）→ 使用" + scriptLabel);
+        distroLabel.addClassName("view-section-title");
+        distroLabel.getStyle().set("overflow-wrap", "anywhere");
 
-        Span hint = new Span("脚本只做「装 + 启动 + 验证」：按 /etc/os-release 选包管理器，"
-                + "已有 docker 时跳过安装；不写 daemon.json、不动已有容器和数据。安装日志会在执行完后完整回显。");
+        CodeEditor scriptEditor = new CodeEditor(CodeEditor.MODE_SHELL);
+        scriptEditor.setValue(script);
+        scriptEditor.setReadOnly(true);
+        scriptEditor.setWidthFull();
+        scriptEditor.setHeight("500px");
+
+        Span hint = new Span("脚本只做「装 + 启动 + 验证」：按识别结果选专用脚本（含 docker compose），"
+                + "官方源连不上自动退回国内镜像；已有 docker 时跳过安装，不写 daemon.json、不动已有容器和数据。"
+                + "点「确认安装」会在实时终端里执行这份脚本，可全程看到进度与报错。");
         hint.addClassName("view-subtitle");
         hint.getStyle().set("overflow-wrap", "anywhere");
 
-        VerticalLayout body = new VerticalLayout(target, UiFactory.group(
-                new Span("执行内容："), UiFactory.copyButton(this, DockerInstallScript.script())), scriptArea, hint);
+        VerticalLayout body = new VerticalLayout(target, distroLabel, UiFactory.group(
+                new Span("执行内容："), UiFactory.copyButton(this, script)), scriptEditor, hint);
         body.setPadding(false);
+        body.setHeightFull();
         body.getStyle().set("gap", "8px");
         dialog.add(body);
 
         Button cancel = UiFactory.button("取消", dialog::close);
         Button install = UiFactory.primary("确认安装", () -> {
             dialog.close();
-            setBusy(true, "正在安装 Docker（视网络与软件源，可能持续几分钟，请勿关闭页面）…");
-            DockerExecutor current = executor;
-            runAsync("安装 Docker", () -> current.installDocker(), raw -> {
-                setBusy(false, "");
-                DockerExecutor.DockerActionResult result = (DockerExecutor.DockerActionResult) raw;
-                showTextDialog(result.isSuccess() ? "Docker 安装完成" : "Docker 安装未完成",
-                        result.getReport());
-                checkDaemon(false);
-            }, e -> {
-                setBusy(false, "");
-                Dialogs.error("安装失败：" + StrUtil.emptyToDefault(e.getMessage(), "未知错误"));
-            });
+            openInstallTerminal(status, distro);
         });
         dialog.getFooter().add(cancel, install);
         dialog.open();
     }
 
-    /** 只读文本弹窗：安装报告 / 命令输出这类长文本都走它 */
-    private void showTextDialog(String header, String text) {
-        Dialog dialog = new Dialog();
-        dialog.setHeaderTitle(header);
-        dialog.setWidth("980px");
-        TextArea area = UiFactory.textArea();
-        area.setValue(StrUtil.emptyToDefault(text, "（无输出）"));
-        area.setReadOnly(true);
-        area.setWidthFull();
-        area.setHeight("520px");
-        area.getElement().getStyle().set("font-family", "var(--lumo-font-family-monospace, monospace)");
-        area.getElement().getStyle().set("font-size", "var(--lumo-font-size-xs)");
-        VerticalLayout body = new VerticalLayout(area);
-        body.setPadding(false);
-        dialog.add(body);
-        dialog.getFooter().add(UiFactory.copyButton(this, area.getValue()), UiFactory.button("关闭", dialog::close));
-        dialog.open();
+    /**
+     * 安装实时终端：token 登记一条 INSTALL 规格（完整安装命令），弹窗内嵌
+     * terminal.html（复用 /ws/docker 端点），websocket 建连即在目标机上 exec 脚本，
+     * 输出实时滚进 xterm。安装结束（成功或失败）前「关闭」禁用、Esc / 点遮罩也关不掉，
+     * 结束后由 websocket 侧的完成回调解锁关闭并重新探测 daemon。
+     */
+    private void openInstallTerminal(DockerDaemonStatus status, DockerExecutor.Distro distro) {
+        DockerExecutor current = executor;
+        if (current == null || current.isClosed()) {
+            return;
+        }
+        try {
+            if (!status.canInstallDocker()) {
+                Dialogs.warn(status.installBlockedReason());
+                return;
+            }
+            DockerTerminalRegistry.Spec spec = new DockerTerminalRegistry.Spec(
+                    DockerTerminalRegistry.Kind.INSTALL, current.getInfo(),
+                    current.buildInstallCommand(status, distro));
+            String token = DockerTerminalRegistry.register(spec);
+
+            Dialog dialog = new Dialog();
+            dialog.setHeaderTitle("正在安装 Docker：" + current.hostLabel());
+            dialog.setWidth("1150px");
+            dialog.setHeight("820px");
+            // 安装中途不允许 Esc / 点击遮罩关掉：iframe 一摘，websocket 断开，脚本就被杀了
+            dialog.setCloseOnEsc(false);
+            dialog.setCloseOnOutsideClick(false);
+
+            Span hint = new Span("安装脚本正在目标机上实时执行，进度与报错直接看下方终端；"
+                    + "完整输出可用终端工具栏的「导出」保存。安装结束前请勿关闭本页面。");
+            hint.addClassName("view-subtitle");
+            hint.getStyle().set("overflow-wrap", "anywhere");
+
+            // ro=1 只读（exec 通道没有输入）、eol=1 修正 LF 换行、norc=1 隐藏「重新连接」
+            //（token 允许复用，重连会把安装脚本再跑一遍）
+            IFrame frame = new IFrame("VAADIN/static/terminal/terminal.html?token=" + token
+                    + "&ws=/ws/docker&ro=1&eol=1&norc=1");
+            frame.setWidthFull();
+            frame.setHeight("640px");
+            frame.getElement().setAttribute("title", "Docker 安装终端");
+
+            VerticalLayout body = new VerticalLayout(hint, frame);
+            body.setPadding(false);
+            body.setSizeFull();
+            body.setSpacing(false);
+            body.getStyle().set("gap", "6px");
+            dialog.add(body);
+
+            Button close = UiFactory.button("安装中…", dialog::close);
+            close.setEnabled(false);
+
+            com.vaadin.flow.component.UI ui = getUI().orElse(null);
+            spec.setCompleteListener((success, outputTail) -> {
+                if (ui == null) {
+                    return;
+                }
+                ui.access(() -> {
+                    if (getUI().isEmpty()) {
+                        return; // 页面已经关了，弹窗也随之不在了
+                    }
+                    close.setText("关闭");
+                    close.setEnabled(true);
+                    dialog.setHeaderTitle((success ? "Docker 安装完成：" : "Docker 安装未成功：")
+                            + current.hostLabel());
+                    if (success) {
+                        Dialogs.success("Docker 安装完成，正在重新检测服务状态…");
+                    } else {
+                        Dialogs.warn("安装脚本已结束，但未确认安装成功，请按终端输出排查。");
+                    }
+                    checkDaemon(false);
+                });
+            });
+            spec.setFailListener(message -> {
+                if (ui == null) {
+                    return;
+                }
+                ui.access(() -> {
+                    if (getUI().isEmpty()) {
+                        return;
+                    }
+                    close.setText("关闭");
+                    close.setEnabled(true);
+                    Dialogs.error("安装终端建立失败：" + StrUtil.emptyToDefault(message, "未知错误"));
+                });
+            });
+
+            // 弹窗关掉就回收 token
+            dialog.addOpenedChangeListener(e -> {
+                if (!dialog.isOpened()) {
+                    DockerTerminalRegistry.release(token);
+                }
+            });
+            dialog.getFooter().add(close);
+            dialog.open();
+        } catch (Exception e) {
+            Dialogs.error("无法开始安装：" + StrUtil.emptyToDefault(e.getMessage(), "未知错误"));
+        }
     }
 
     /** 占位面板上的「启动 Docker 服务」：后台执行 systemd/sysv 启动命令，完成后重新探测 */

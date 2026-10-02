@@ -303,6 +303,9 @@
         var socket = null;
         /** 服务端 notice 里的错误原文，onclose 时用它代替"连接已断开"这种没信息量的话 */
         var lastError = '';
+        /* 服务端发过 lv=end 的终态通知（安装脚本跑完了）：正常收尾时状态栏不标红 */
+        var sessionEnded = false;
+        var lastEndText = '';
 
         /* ---------------- 运行模式 ----------------
          * 三个参数都有默认值，不传时行为与 SSH 终端完全一致。
@@ -326,6 +329,15 @@
         var wsEndpoint = getParam('ws') || '/ws/ssh';
         var readOnlyMode = getParam('ro') === '1';
         var convertEol = getParam('eol') === '1';
+        /* norc=1：隐藏「重新连接」。安装终端必须带上——token 允许重复使用，
+         * 点重连等于把安装脚本在目标机上再跑一遍。 */
+        var noReconnect = getParam('norc') === '1';
+
+        function showReconnect() {
+            if (!noReconnect) {
+                showReconnect();
+            }
+        }
 
         /* ---------------- 外观设置（字号 / 主题） ----------------
          * 保存在浏览器 localStorage 里，按页面（同源共享）记住；
@@ -439,12 +451,12 @@
             return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
         }
 
-        /** 提示写进终端内容里，用颜色和远端输出区分开 */
-        function writeNotice(text, isError) {
+        /** 提示写进终端内容里，用颜色和远端输出区分开；isEnd（终态通知）用绿色 */
+        function writeNotice(text, isError, isEnd) {
             if (!text) {
                 return;
             }
-            var color = isError ? '\u001b[31m' : '\u001b[33m';
+            var color = isError ? '\u001b[31m' : (isEnd ? '\u001b[32m' : '\u001b[33m');
             term.write('\r\n' + color + '[' + timeLabel() + '] ' + text + '\u001b[0m\r\n');
         }
 
@@ -485,6 +497,8 @@
                 socket = null;
             }
             lastError = '';
+            sessionEnded = false;
+            lastEndText = '';
             reconnectNode.style.display = 'none';
             setStatus('正在连接...');
             showMask('正在建立 SSH 连接，请稍候……');
@@ -494,7 +508,7 @@
                 url = buildWsUrl();
             } catch (e) {
                 setStatus('连接地址不合法：' + e.message, false);
-                reconnectNode.style.display = 'inline';
+                showReconnect();
                 return;
             }
 
@@ -502,7 +516,7 @@
                 socket = new WebSocket(url);
             } catch (e) {
                 setStatus('连接地址不合法：' + e.message, false);
-                reconnectNode.style.display = 'inline';
+                showReconnect();
                 return;
             }
 
@@ -531,14 +545,19 @@
             };
 
             socket.onclose = function (event) {
-                var reason = lastError || ('连接已断开（code ' + event.code + '）');
-                setStatus(reason, false);
-                reconnectNode.style.display = 'inline';
+                var normalEnd = sessionEnded && !lastError;
+                var reason = lastError || (sessionEnded
+                    ? (lastEndText || '会话已结束')
+                    : ('连接已断开（code ' + event.code + '）'));
+                setStatus(reason, normalEnd);
+                if (!normalEnd) {
+                    showReconnect();
+                }
                 if (maskVisible()) {
                     // 连接还没成过就断了：把原因亮在遮罩上，而不是让用户对黑屏猜
                     failMask(reason);
                 }
-                writeNotice(reason, true);
+                writeNotice(reason, !normalEnd, normalEnd);
             };
 
             socket.onerror = function () {
@@ -558,7 +577,14 @@
                 return;
             }
             var isError = msg.lv === 'err';
+            var isEnd = msg.lv === 'end';
             var text = msg.v || '';
+            if (isEnd) {
+                // 终态通知（安装脚本跑完）：绿色展示，状态栏标 OK，收尾不再按断线处理
+                sessionEnded = true;
+                lastEndText = text;
+                setStatus(text, true);
+            }
             if (isError) {
                 lastError = text;
                 setStatus(text, false);
@@ -567,7 +593,7 @@
                     failMask(text);
                 }
             }
-            writeNotice(text, isError);
+            writeNotice(text, isError, isEnd);
         }
 
         term.onData(function (data) {

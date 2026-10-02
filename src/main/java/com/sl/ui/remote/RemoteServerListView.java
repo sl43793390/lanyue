@@ -464,7 +464,7 @@ public class RemoteServerListView extends ViewBase {
         ComboBox<String> groupField = new ComboBox<>("目标分组");
         groupField.setItems(groupNames);
         groupField.setValue(currentGroup);
-        groupField.setWidth("500px");
+        groupField.setWidth("435px");
 
         VerticalLayout form = new VerticalLayout(tip, groupField);
         form.setPadding(false);
