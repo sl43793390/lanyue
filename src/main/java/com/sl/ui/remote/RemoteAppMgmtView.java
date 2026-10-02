@@ -113,6 +113,11 @@ public class RemoteAppMgmtView extends ViewBase {
             view.setPresetHost(presetHost);
             return view;
         });
+        addTab("MySQL管理-" + host, () -> {
+            MysqlMgmtView view = applicationContext.getBean(MysqlMgmtView.class);
+            view.setPresetHost(presetHost);
+            return view;
+        });
 
         // 默认选中第一个：Tabs 没有子项时 setSelectedTab 会 NPE，先 add 再选
         tabBar.setSelectedTab(tabs.values().iterator().next().tab());
@@ -131,10 +136,13 @@ public class RemoteAppMgmtView extends ViewBase {
         for (TabEntry entry : tabs.values()) {
             boolean show = entry.tab() == selected;
             entry.content().setVisible(show);
-            // nginx 页的 SSH 建连推迟到第一次切进来：四个子页构建即 attach，
+            // nginx / MySQL 页的 SSH 建连推迟到第一次切进来：五个子页构建即 attach，
             // 自动连会让只想看 jar 项目的用户也背一条 SSH（见 NginxMgmtView#lazyConnect）
             if (show && entry.content() instanceof NginxMgmtView nginx) {
                 nginx.lazyConnect();
+            }
+            if (show && entry.content() instanceof MysqlMgmtView mysql) {
+                mysql.lazyConnect();
             }
         }
     }

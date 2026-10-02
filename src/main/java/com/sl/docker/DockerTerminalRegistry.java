@@ -73,6 +73,14 @@ public final class DockerTerminalRegistry {
         /** INSTALL 用：要在目标机上完整执行的安装命令（含 sudo 前缀与整段脚本） */
         private final String installCommand;
 
+        /* ---- INSTALL 模式的收尾约定（默认 = docker 一键安装；nginx 等复用方在 register 前改写） ---- */
+        /** EOF 时判定安装成功的输出标记（脚本最后必须打出这一行） */
+        private String successMarker = DockerInstallScript.RESULT_OK;
+        /** 安装成功时发到终端的终态提示 */
+        private String successNotice = "安装脚本执行完成，docker 已就绪。";
+        /** 脚本结束但未命中成功标记时的终态提示 */
+        private String failNotice = "安装脚本已结束，但未确认安装成功，请根据上方输出排查。";
+
         /* ---- COMPOSE_LOGS 用 ---- */
         /** 探测到的 compose 命令（{@code docker compose} 或 {@code docker-compose}）/ 或项目目录 */
         private String projectDir = "";
@@ -182,6 +190,35 @@ public final class DockerTerminalRegistry {
         /** INSTALL 模式要执行的完整安装命令 */
         public String getInstallCommand() {
             return installCommand;
+        }
+
+        /** 复用安装终端的其它软件（如 nginx）在 register 前改写：脚本末尾打出的成功标记 */
+        public void setSuccessMarker(String marker) {
+            if (StrUtil.isNotBlank(marker)) {
+                this.successMarker = marker;
+            }
+        }
+
+        public String getSuccessMarker() {
+            return successMarker;
+        }
+
+        /** 复用方改写 EOF 时发到终端的成败提示文案 */
+        public void setOutcomeNotices(String successNotice, String failNotice) {
+            if (StrUtil.isNotBlank(successNotice)) {
+                this.successNotice = successNotice;
+            }
+            if (StrUtil.isNotBlank(failNotice)) {
+                this.failNotice = failNotice;
+            }
+        }
+
+        public String getSuccessNotice() {
+            return successNotice;
+        }
+
+        public String getFailNotice() {
+            return failNotice;
         }
 
         /** 安装脚本执行完毕（EOF）后的回调，页面用它解锁「关闭」按钮并重探 daemon */

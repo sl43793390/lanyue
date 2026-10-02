@@ -3,6 +3,7 @@ package com.sl.ops.model;
 import cn.hutool.core.util.StrUtil;
 
 import java.io.Serializable;
+import java.util.Set;
 
 /**
  * 目标机的「运维环境快照」：一次探测拿回来，页面上的每个动作据此决定用哪条命令。
@@ -23,6 +24,8 @@ public class LinuxEnv implements Serializable {
 
     private String osRelease = "";
     private String distroId = "";
+    /** /etc/os-release 里的 VERSION_ID（centos 是 7，rocky 是 8/9，ubuntu 是 22.04/24.04） */
+    private String versionId = "";
     private String uid = "";
     private String loginUser = "";
     private String home = "";
@@ -45,6 +48,8 @@ public class LinuxEnv implements Serializable {
     private String iptablesCmd = "";
     private String firewalldActive = "";
     private String ufwActive = "";
+    /** crontab 命令路径；为空说明目标机没装 cron（Rocky/Ubuntu 最小化安装常见） */
+    private String crontabCmd = "";
 
     /** 探测本身失败时的原因（命令没跑起来 / 连接断了） */
     private String probeError = "";
@@ -119,6 +124,30 @@ public class LinuxEnv implements Serializable {
         return isRoot() || sudoAvailable;
     }
 
+    /** 探测到了 SELinux（getenforce 存在）。Ubuntu / Debian 默认不带，这类机器上 SELinux 相关按钮应该置灰 */
+    public boolean hasSelinux() {
+        return StrUtil.isNotBlank(selinux);
+    }
+
+    /**
+     * 发行版家族：RHEL 系（centos / rocky / rhel / almalinux / ol / fedora 及国产衍生）
+     * 还是 Debian 系（debian / ubuntu / uos / deepin）。
+     * <p>
+     * 没有现成命令差异可以靠「探测谁存在」兜底的场景（比如提示用什么包管理器装 cron），
+     * 用家族判断给一句对症的提示。
+     */
+    public String familyId() {
+        String id = StrUtil.trimToEmpty(distroId).toLowerCase();
+        if (Set.of("centos", "rocky", "rhel", "almalinux", "ol", "fedora",
+                "opencloudos", "anolis", "openeuler", "tencentos").contains(id)) {
+            return "rhel";
+        }
+        if (Set.of("debian", "ubuntu", "uos", "deepin").contains(id)) {
+            return "debian";
+        }
+        return "other";
+    }
+
     /** 权限前缀：root 为空串，非 root 有免密 sudo 时是 {@code sudo -n }，都没有则返回 null */
     public String privilegePrefix() {
         if (isRoot()) {
@@ -172,6 +201,14 @@ public class LinuxEnv implements Serializable {
 
     public void setDistroId(String distroId) {
         this.distroId = StrUtil.emptyToDefault(distroId, "");
+    }
+
+    public String getVersionId() {
+        return versionId;
+    }
+
+    public void setVersionId(String versionId) {
+        this.versionId = StrUtil.emptyToDefault(versionId, "");
     }
 
     public String getUid() {
@@ -308,6 +345,14 @@ public class LinuxEnv implements Serializable {
 
     public void setUfwActive(String ufwActive) {
         this.ufwActive = StrUtil.emptyToDefault(ufwActive, "");
+    }
+
+    public String getCrontabCmd() {
+        return crontabCmd;
+    }
+
+    public void setCrontabCmd(String crontabCmd) {
+        this.crontabCmd = StrUtil.emptyToDefault(crontabCmd, "");
     }
 
     public String getProbeError() {

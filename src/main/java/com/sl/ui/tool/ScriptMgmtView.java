@@ -277,10 +277,11 @@ public class ScriptMgmtView extends ViewBase {
          */
         ScriptEditDialog(ScriptInfoEntity source) {
             setHeaderTitle(source == null ? "新建脚本" : "复制脚本");
-            setWidth("680px");
+            setWidth("1100px");
+            setHeight("800px");
 
-            contentField.setHeight("320px");
-            contentField.setWidth("640px");
+            contentField.setHeight("520px");
+            contentField.setWidth("100%");
 
             if (source != null) {
                 nameField.setValue(StrUtil.nullToDefault(source.getScriptName(), "") + "-副本");

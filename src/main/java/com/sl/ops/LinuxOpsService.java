@@ -77,6 +77,7 @@ public class LinuxOpsService {
             . /etc/os-release 2>/dev/null
             echo "LENV_OS=${PRETTY_NAME}"
             echo "LENV_DISTRO=${ID}"
+            echo "LENV_VER=${VERSION_ID}"
             echo "LENV_UID=$(id -u)"
             echo "LENV_USER=$(whoami)"
             echo "LENV_HOME=${HOME}"
@@ -91,6 +92,7 @@ public class LinuxOpsService {
             echo "LENV_IPTABLES_CMD=$(command -v iptables 2>/dev/null)"
             echo "LENV_FIREWALLD_ACTIVE=$(systemctl is-active firewalld 2>/dev/null)"
             echo "LENV_UFW_ACTIVE=$(ufw status 2>/dev/null | head -n 1 | awk '{print $2}')"
+            echo "LENV_CRON=$(command -v crontab 2>/dev/null)"
             echo "LENV_WHEEL=$(getent group wheel >/dev/null 2>&1 && echo yes || echo no)"
             echo "LENV_SUDOGRP=$(getent group sudo >/dev/null 2>&1 && echo yes || echo no)"
             echo "LENV_USERS=$(getent passwd | awk -F: '$3>=1000 && $3<65534' | wc -l)"
@@ -102,6 +104,7 @@ public class LinuxOpsService {
         LinuxEnv env = new LinuxEnv();
         env.setOsRelease(map.get("LENV_OS"));
         env.setDistroId(map.get("LENV_DISTRO"));
+        env.setVersionId(map.get("LENV_VER"));
         env.setUid(map.get("LENV_UID"));
         env.setLoginUser(map.get("LENV_USER"));
         env.setHome(map.get("LENV_HOME"));
@@ -118,6 +121,7 @@ public class LinuxOpsService {
         env.setIptablesCmd(map.get("LENV_IPTABLES_CMD"));
         env.setFirewalldActive(map.get("LENV_FIREWALLD_ACTIVE"));
         env.setUfwActive(map.get("LENV_UFW_ACTIVE"));
+        env.setCrontabCmd(map.get("LENV_CRON"));
         String users = StrUtil.trimToEmpty(map.get("LENV_USERS"));
         try {
             env.setNormalUserCount(users.isEmpty() ? 0 : Integer.parseInt(users));
@@ -585,15 +589,15 @@ public class LinuxOpsService {
                 """);
     }
 
-    /** 立即校时 */
+    /** 立即校时：RHEL 系走 chronyd，Ubuntu 22/24 默认只有 systemd-timesyncd，都没有再退 ntpdate */
     public String syncTimeNow(LinuxEnv env) throws IOException {
         String prefix = rootPrefix(env, "校时");
         String inner = "(command -v chronyc >/dev/null 2>&1 && chronyc makestep) "
                 + "|| (systemctl restart chronyd 2>/dev/null) "
                 + "|| (systemctl restart chrony 2>/dev/null) "
-                + "|| (systemctl restart ntpd 2>/dev/null) "
+                + "|| (systemctl restart systemd-timesyncd 2>/dev/null) "
                 + "|| (command -v ntpdate >/dev/null 2>&1 && ntpdate -u pool.ntp.org) "
-                + "|| echo '没有可用的校时工具（chronyc / ntpdate）'; date '+%Y-%m-%d %H:%M:%S %Z'";
+                + "|| echo '没有可用的校时工具（chronyc / systemd-timesyncd / ntpdate）'; date '+%Y-%m-%d %H:%M:%S %Z'";
         return runEchoing(prefix + "sh -c " + q(inner));
     }
 
@@ -620,6 +624,9 @@ public class LinuxOpsService {
      *                  true 改 /etc/selinux/config（重启后生效）
      */
     public String setSelinux(boolean enabled, boolean permanent, LinuxEnv env) throws IOException {
+        if (!env.hasSelinux()) {
+            throw new IOException("目标机没有 SELinux（getenforce 不存在，Ubuntu / Debian 等发行版默认不带），无需此操作");
+        }
         String prefix = rootPrefix(env, "修改 SELinux");
         StringBuilder script = new StringBuilder();
         if (!permanent) {
@@ -672,15 +679,26 @@ public class LinuxOpsService {
         return runEchoing(script.toString());
     }
 
-    /** 计划任务：当前用户与 root 的 crontab、/etc/cron.d、/etc/crontab、systemd timer */
-    public String crontabList(LinuxEnv env) throws IOException {
-        String sudo = sudoPrefix(env);
-        return run("""
-                echo "== 当前用户 crontab =="
-                crontab -l 2>/dev/null || echo "（当前用户没有计划任务）"
-                echo
-                echo "== root crontab =="
-                %scrontab -l 2>/dev/null || echo "（root 没有计划任务，或当前账号无权查看）"
+    /**
+     * 计划任务总览：指定用户的 crontab、/etc/cron.d、/etc/crontab、systemd timer。
+     *
+     * @param userName 空（或等于当前登录用户）看自己的；看别人的需要 root / 免密 sudo
+     */
+    public String crontabList(String userName, LinuxEnv env) throws IOException {
+        boolean self = isSelf(userName, env);
+        String who = self ? StrUtil.emptyToDefault(env.getLoginUser(), "当前用户") : validateUserName(userName);
+        String userPart = self
+                ? "crontab -l 2>/dev/null || echo \"（该用户没有计划任务）\""
+                : sudoPrefix(env) + "crontab -u " + q(who) + " -l 2>/dev/null"
+                        + " || echo \"（该用户没有计划任务，或当前账号无权查看）\"";
+        return run(("""
+                if ! command -v crontab >/dev/null 2>&1; then
+                  echo "!! 这台机器没有安装 cron（crontab 命令不存在），定时任务功能不可用"
+                  echo "   安装方法：%s"
+                  echo
+                fi
+                echo "== 用户 %s 的 crontab =="
+                %s
                 echo
                 echo "== /etc/cron.d =="
                 ls -l /etc/cron.d/ 2>/dev/null
@@ -689,11 +707,92 @@ public class LinuxOpsService {
                 done 2>/dev/null
                 echo
                 echo "== /etc/crontab =="
-                grep -v '^#' /etc/crontab 2>/dev/null | grep -v '^$'
+                grep -v '^#' /etc/crontab 2>/dev/null | grep -v '^$' || echo "（没有 /etc/crontab）"
                 echo
                 echo "== systemd 定时器 =="
                 (command -v systemctl >/dev/null 2>&1 && systemctl list-timers --no-pager 2>/dev/null | head -n 15) || true
-                """.formatted(sudo));
+                """).formatted(cronInstallHint(env), who, userPart));
+    }
+
+    /** cron 没装时按发行版给一句对症的安装命令（Rocky/CentOS 用 cronie + crond，Ubuntu/Debian 用 cron） */
+    private static String cronInstallHint(LinuxEnv env) {
+        return switch (env.familyId()) {
+            case "rhel" -> "yum install -y cronie && systemctl enable --now crond";
+            case "debian" -> "apt install -y cron && systemctl enable --now cron";
+            default -> "RHEL 系：yum install -y cronie && systemctl enable --now crond；"
+                    + "Debian 系：apt install -y cron && systemctl enable --now cron";
+        };
+    }
+
+    /**
+     * 读取一个用户的 crontab 原文（给编辑弹窗预填）。
+     * 没有计划任务时返回空串——空串本身就是合法的可编辑内容。
+     */
+    public String crontabRead(String userName, LinuxEnv env) throws IOException {
+        if (isSelf(userName, env)) {
+            return run("crontab -l 2>/dev/null || true");
+        }
+        String name = validateUserName(userName);
+        String prefix = rootPrefix(env, "查看用户 " + name + " 的 crontab");
+        return run(prefix + "crontab -u " + q(name) + " -l 2>/dev/null || true");
+    }
+
+    /**
+     * 保存一个用户的 crontab（整体替换）。
+     * <p>
+     * 内容走 base64 进管道（{@code echo <b64> | base64 -d | crontab -}），换行、引号、
+     * {@code $} 都不会被 shell 拆散，明文也不进远端 {@code ps}。保存前先把原内容备份到
+     * 目标机（自己的备份到家目录，代改别人的备份到 /tmp），保存后回读确认。
+     */
+    public String crontabSave(String userName, String content, LinuxEnv env) throws IOException {
+        String text = StrUtil.trimToEmpty(content).replace("\r\n", "\n").replace('\r', '\n');
+        if (text.indexOf('\0') >= 0) {
+            throw new IOException("crontab 内容不能包含 NUL 字符");
+        }
+        if (text.length() > 256 * 1024) {
+            throw new IOException("crontab 内容超过 256KB，多半是粘错了东西，请检查后再试");
+        }
+        long tooLong = text.lines().filter(line -> line.length() > 1000).count();
+        if (tooLong > 0) {
+            throw new IOException("有 " + tooLong + " 行超过 1000 字符，cron 无法保证正确解析，请拆分或检查内容");
+        }
+        // cronie / vixie-cron 的 `crontab -` 会丢弃没有尾换行的最后一行：
+        // 单行内容不带 \n 装进去就是空的 crontab，必须补上
+        if (!text.isEmpty() && !text.endsWith("\n")) {
+            text = text + "\n";
+        }
+        String encoded = Base64.getEncoder().encodeToString(text.getBytes(StandardCharsets.UTF_8));
+        boolean self = isSelf(userName, env);
+        String script;
+        if (self) {
+            script = "TS=$(date +%Y%m%d%H%M%S); "
+                    + "crontab -l > \"$HOME/crontab.bak-$TS\" 2>/dev/null; "
+                    + "echo " + encoded + " | base64 -d | crontab - "
+                    + "&& echo \"已保存（原内容备份在 ~/crontab.bak-$TS）\"";
+        } else {
+            String name = validateUserName(userName);
+            String prefix = rootPrefix(env, "修改用户 " + name + " 的 crontab");
+            String inner = "TS=$(date +%Y%m%d%H%M%S); "
+                    + "crontab -u " + name + " -l > /tmp/crontab.bak-" + name + "-$TS 2>/dev/null; "
+                    + "echo " + encoded + " | base64 -d | crontab -u " + name + " - "
+                    + "&& echo \"已保存（原内容备份在 /tmp/crontab.bak-" + name + "-$TS）\"";
+            script = prefix + "sh -c " + q(inner);
+        }
+        SshCommandRunner.Result result = runner.exec(script);
+        if (!result.isOk()) {
+            throw new IOException("保存 crontab 失败：" + result.errorMessage());
+        }
+        String readCmd = self ? "crontab -l" : rootPrefix(env, "回读 crontab") + "crontab -u " + q(validateUserName(userName)) + " -l";
+        SshCommandRunner.Result check = runner.exec(readCmd);
+        String saved = StrUtil.trimToEmpty(check.getOutput());
+        return StrUtil.trimToEmpty(result.getOutput()) + "\n"
+                + "-- 保存后回读（这是目标机上现在生效的 crontab） --\n"
+                + (saved.isEmpty() ? "（crontab 现在是空的）" : saved) + "\n";
+    }
+
+    /** 目标用户是不是当前登录用户自己（自己改自己的 crontab 不需要任何提权） */
+    private static boolean isSelf(String userName, LinuxEnv env) {
+        return StrUtil.isBlank(userName) || userName.equals(env.getLoginUser());
     }
 
     /**

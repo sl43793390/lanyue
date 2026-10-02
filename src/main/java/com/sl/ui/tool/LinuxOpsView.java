@@ -26,6 +26,7 @@ import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.textfield.PasswordField;
 import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.component.textfield.TextField;
+import com.vaadin.flow.data.value.ValueChangeMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
@@ -81,6 +82,12 @@ public class LinuxOpsView extends ViewBase {
     private final TextField unitField = UiFactory.textField();
     private final TextField portQueryField = UiFactory.textField();
     private final TextField hostnameField = UiFactory.textField();
+    /** crontab 编辑的目标用户：自己不需要提权，别人的（root）需要 root / 免密 sudo */
+    private final ComboBox<String> cronUserCombo = new ComboBox<>();
+    /** 探测到目标机没有 SELinux（Ubuntu / Debian 默认不带）时统一置灰 */
+    private final List<Button> selinuxButtons = new ArrayList<>();
+
+    private static final String CRON_USER_CURRENT = "当前登录用户";
 
     private List<ConnectionInfo> candidateHosts = new ArrayList<>();
     private ConnectionInfo presetHost;
@@ -203,6 +210,19 @@ public class LinuxOpsView extends ViewBase {
                 button.setTooltipText(reason);
             }
         }
+        // Ubuntu / Debian 默认没有 SELinux，相关按钮直接置灰，别让用户点了挨一句 getenforce: not found
+        if (!env.hasSelinux()) {
+            String selinuxReason = "目标机没有 SELinux（getenforce 不存在），无需此操作";
+            for (Button button : selinuxButtons) {
+                button.setEnabled(false);
+                button.setTooltipText(selinuxReason);
+            }
+        }
+        // 非 root 且无免密 sudo 的账号看不了别人的 crontab，把「root」选项收掉
+        if (!canEscalate) {
+            cronUserCombo.setItems(List.of(CRON_USER_CURRENT));
+            cronUserCombo.setValue(CRON_USER_CURRENT);
+        }
         if (StrUtil.isNotBlank(env.getProbeError())) {
             envLabel.setText("已连接 " + hostLabel() + "，但环境探测没读全：" + env.getProbeError()
                     + "（只读动作仍可用，需要 root 的动作已置灰）");
@@ -233,6 +253,7 @@ public class LinuxOpsView extends ViewBase {
         opsArea.add(buildUserGroup());
         opsArea.add(buildServiceGroup());
         opsArea.add(buildInspectGroup());
+        opsArea.add(buildCrontabGroup());
         opsArea.add(buildHostGroup());
         opsArea.add(buildDangerGroup());
     }
@@ -327,11 +348,90 @@ public class LinuxOpsView extends ViewBase {
                 actionRow(new Span("端口占用"), portQueryField,
                         UiFactory.rowAction("查询", this::queryPortOwner),
                         UiFactory.rowAction("登录用户", () -> query("登录用户", () -> service.loggedInUsers())),
-                        UiFactory.rowAction("计划任务", () -> query("计划任务", () -> service.crontabList(env))),
                         UiFactory.rowAction("系统日志(200行)", () -> query("系统日志", () -> service.systemLog(200))),
                         UiFactory.rowAction("时间同步状态", () -> query("时间同步状态", () -> service.timeSyncStatus())),
                         privileged("立即校时", () -> query("立即校时", () -> service.syncTimeNow(env))),
                         UiFactory.rowAction("SELinux 状态", () -> query("SELinux 状态", () -> service.selinuxStatus()))));
+    }
+
+    /** 定时任务：按用户查看 crontab 与系统级定时配置，支持在线编辑（保存前自动备份） */
+    private Component buildCrontabGroup() {
+        cronUserCombo.setItems(List.of(CRON_USER_CURRENT, "root"));
+        cronUserCombo.setValue(CRON_USER_CURRENT);
+        cronUserCombo.setWidth("170px");
+        return group(section("定时任务（crontab）"),
+                actionRow(new Span("目标用户"), cronUserCombo,
+                        UiFactory.rowAction("查看计划任务", () -> query("计划任务", () -> service.crontabList(cronTarget(), env))),
+                        privileged("编辑 crontab…", this::openCrontabEditor)));
+    }
+
+    /** 编辑目标：选「当前登录用户」传空串，选具体用户传用户名 */
+    private String cronTarget() {
+        String value = StrUtil.trimToEmpty(cronUserCombo.getValue());
+        return CRON_USER_CURRENT.equals(value) ? "" : value;
+    }
+
+    /**
+     * crontab 在线编辑：先取原文预填，保存时整体替换。
+     * 改自己的 crontab 不需要任何提权；改别人的（比如 root 的）由 {@link #privileged} 统一管权限。
+     */
+    private void openCrontabEditor() {
+        if (!checkEnv()) {
+            return;
+        }
+        String target = cronTarget();
+        boolean self = StrUtil.isBlank(target) || target.equals(env.getLoginUser());
+        if (!self && !ensurePrivilege("编辑用户 " + target + " 的 crontab")) {
+            return;
+        }
+        setBusy(true, "正在读取 crontab …");
+        runAsync("读取 crontab", () -> service.crontabRead(target, env), content -> {
+            setBusy(false, "");
+            showCrontabEditor(target, String.valueOf(content));
+        }, e -> {
+            setBusy(false, "");
+            Dialogs.error("读取 crontab 失败：" + StrUtil.emptyToDefault(e.getMessage(), e.getClass().getSimpleName()));
+        });
+    }
+
+    private void showCrontabEditor(String target, String content) {
+        String owner = StrUtil.isBlank(target) ? env.getLoginUser() : target;
+        Dialog dialog = new Dialog();
+        dialog.setHeaderTitle("编辑 crontab（用户：" + owner + "）");
+        dialog.setWidth("1000px");
+
+        TextArea area = UiFactory.textArea();
+        // TextArea 默认 ON_CHANGE：值只在失焦时才同步到服务端，靠「点保存顺便失焦」读新值有竞态
+        // （2026-10-02 排查：保存时服务端 getValue() 拿到旧值）。EAGER 边输入边同步，不依赖失焦。
+        area.setValueChangeMode(ValueChangeMode.EAGER);
+        area.setValue(StrUtil.emptyToDefault(content, ""));
+        area.setWidthFull();
+        area.setHeight("440px");
+        area.getElement().getStyle().set("font-family", "var(--lumo-font-family-monospace, monospace)");
+        area.getElement().getStyle().set("font-size", "var(--lumo-font-size-xs)");
+
+        Span hint = new Span("每行一条，格式：分 时 日 月 周 命令（如 0 2 * * * /opt/backup.sh）。"
+                + "保存会整体替换用户 " + owner + " 的 crontab，原内容会先备份到目标机（~/crontab.bak-时间戳 或 /tmp/）。"
+                + "清空全部内容保存 = 删除该用户的所有计划任务。");
+        hint.addClassName("view-subtitle");
+        hint.getStyle().set("overflow-wrap", "anywhere");
+
+        VerticalLayout body = new VerticalLayout(area, hint);
+        body.setPadding(false);
+        body.getStyle().set("gap", "10px");
+        dialog.add(body);
+        dialog.getFooter().add(UiFactory.copyButton(this, content),
+                UiFactory.button("取消", dialog::close),
+                UiFactory.primary("保存", () -> {
+                    String edited = area.getValue();
+                    log.info("crontab 编辑器保存触发：user={} contentLen={}", owner, edited == null ? -1 : edited.length());
+                    dialog.close();
+                    Dialogs.confirm("保存 crontab",
+                            "将整体替换用户 " + owner + " 在 " + hostLabel() + " 上的 crontab（共 "
+                                    + edited.lines().count() + " 行），原内容会先备份到目标机。确认保存？",
+                            () -> query("保存 crontab", () -> service.crontabSave(target, edited, env)));
+                }));
+        dialog.open();
     }
 
     private Component buildHostGroup() {
@@ -348,11 +448,17 @@ public class LinuxOpsView extends ViewBase {
         Span title = new Span("危险操作（执行前先确认目标机是哪一台）");
         title.addClassName("view-section-title");
         title.getStyle().set("color", "var(--lumo-error-text-color)");
+        Button selinuxOffTemp = privileged("关闭 SELinux（临时）", () -> confirmSelinux(false, false));
+        Button selinuxOffPerm = privileged("关闭 SELinux（永久，需重启）", () -> confirmSelinux(false, true));
+        Button selinuxOnTemp = privileged("开启 SELinux（临时）", () -> confirmSelinux(true, false));
+        selinuxButtons.add(selinuxOffTemp);
+        selinuxButtons.add(selinuxOffPerm);
+        selinuxButtons.add(selinuxOnTemp);
         return group(title,
                 actionRow(
-                        privileged("关闭 SELinux（临时）", () -> confirmSelinux(false, false)),
-                        privileged("关闭 SELinux（永久，需重启）", () -> confirmSelinux(false, true)),
-                        privileged("开启 SELinux（临时）", () -> confirmSelinux(true, false)),
+                        selinuxOffTemp,
+                        selinuxOffPerm,
+                        selinuxOnTemp,
                         privileged("取消已排队的关机", () -> confirmPower("cancel", "取消已排队的关机",
                                 "将执行 shutdown -c，取消正在倒计时的关机/重启。")),
                         privileged("重启系统", () -> confirmPower("reboot", "重启目标机",

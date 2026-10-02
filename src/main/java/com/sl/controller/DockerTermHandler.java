@@ -4,7 +4,6 @@ import cn.hutool.core.io.IoUtil;
 import cn.hutool.core.util.StrUtil;
 import com.alibaba.fastjson2.JSON;
 import com.alibaba.fastjson2.JSONObject;
-import com.sl.docker.DockerInstallScript;
 import com.sl.docker.DockerTerminalRegistry;
 import com.sl.entity.ConnectionInfo;
 import com.sl.util.SSHClientUtil;
@@ -461,10 +460,10 @@ public class DockerTermHandler {
             } catch (Exception e) {
                 output = "";
             }
-            boolean ok = output.contains(DockerInstallScript.RESULT_OK);
+            // 成功标记与提示文案由登记方（docker / nginx 一键安装）在 Spec 里约定
+            boolean ok = output.contains(spec.getSuccessMarker());
             sendNotice(session, ok ? "end" : "err",
-                    ok ? "安装脚本执行完成，docker 已就绪。"
-                       : "安装脚本已结束，但未确认安装成功，请根据上方输出排查。");
+                    ok ? spec.getSuccessNotice() : spec.getFailNotice());
             spec.fireComplete(ok, output);
         }
 
