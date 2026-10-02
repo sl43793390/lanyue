@@ -3,6 +3,7 @@ package com.sl.ui.docker;
 import cn.hutool.core.util.StrUtil;
 import com.sl.docker.DockerDaemonDownException;
 import com.sl.docker.DockerExecutor;
+import com.sl.docker.DockerInstallScript;
 import com.sl.docker.DockerService;
 import com.sl.docker.DockerTerminalRegistry;
 import com.sl.docker.model.DockerContainer;
@@ -12,10 +13,10 @@ import com.sl.entity.ConnectionInfo;
 import com.sl.mapper.ConnectionInfoMapper;
 import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.Dialogs;
+import com.sl.ui.component.HostCandidates;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
 import com.sl.util.Constants;
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.DetachEvent;
@@ -45,7 +46,6 @@ import org.springframework.stereotype.Service;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -91,6 +91,8 @@ public class DockerMgmtView extends ViewBase {
     private final Span noticeTitle = new Span();
     private final TextArea noticeText = UiFactory.textArea();
     private final Button noticeStartBtn = UiFactory.primary("启动 Docker 服务", this::startDaemonRequested);
+    /** 目标机上没有 docker 时的入口：把内置安装脚本下发到目标机执行 */
+    private final Button noticeInstallBtn = UiFactory.primary("一键安装 Docker", this::installDockerRequested);
 
     // ---- 子标签 ----
     private final Tabs subTabs = new Tabs();
@@ -170,30 +172,7 @@ public class DockerMgmtView extends ViewBase {
 
     /** 候选主机 = 数据库 connection_info + remoteServerList.conf，按 host:port 去重 */
     private void loadCandidateHosts() {
-        List<ConnectionInfo> list = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
-        try {
-            List<ConnectionInfo> fromDb = connectionInfoMapper.selectList(new QueryWrapper<>());
-            if (fromDb != null) {
-                for (ConnectionInfo info : fromDb) {
-                    addHost(list, seen, info);
-                }
-            }
-        } catch (Exception e) {
-            log.warn("读取数据库中的服务器列表失败：{}", e.getMessage());
-        }
-        try {
-            for (String line : com.sl.util.Util.getRemoteServerList()) {
-                String[] split = line.split("=");
-                if (split.length < 4) {
-                    continue;
-                }
-                String keyPath = split.length > 4 ? split[4] : null;
-                addHost(list, seen, new ConnectionInfo(split[0], split[3], split[1], split[2], keyPath));
-            }
-        } catch (Exception e) {
-            log.warn("读取 remoteServerList.conf 失败：{}", e.getMessage());
-        }
+        List<ConnectionInfo> list = HostCandidates.load(connectionInfoMapper);
         candidateHosts = list;
         hostCombo.setItems(list);
         if (list.isEmpty()) {
@@ -201,18 +180,8 @@ public class DockerMgmtView extends ViewBase {
         }
     }
 
-    private static void addHost(List<ConnectionInfo> list, Set<String> seen, ConnectionInfo info) {
-        if (info == null || StrUtil.isBlank(info.getIdHost())) {
-            return;
-        }
-        if (!seen.add(info.getIdHost() + ":" + portOf(info))) {
-            return;
-        }
-        list.add(info);
-    }
-
     private static String portOf(ConnectionInfo info) {
-        return StrUtil.isBlank(info.getCdPort()) ? "22" : info.getCdPort().trim();
+        return HostCandidates.portOf(info);
     }
 
     // ------------------------------------------------------------------
@@ -248,16 +217,7 @@ public class DockerMgmtView extends ViewBase {
     }
 
     private static ConnectionInfo matchHost(List<ConnectionInfo> list, ConnectionInfo wanted) {
-        if (list == null || wanted == null || StrUtil.isBlank(wanted.getIdHost())) {
-            return null;
-        }
-        String key = wanted.getIdHost() + ":" + portOf(wanted);
-        for (ConnectionInfo info : list) {
-            if (key.equals(info.getIdHost() + ":" + portOf(info))) {
-                return info;
-            }
-        }
-        return null;
+        return HostCandidates.match(list, wanted);
     }
 
     // ------------------------------------------------------------------
@@ -344,7 +304,8 @@ public class DockerMgmtView extends ViewBase {
         noticeText.setReadOnly(true);
         noticeText.setHeight("150px");
         noticeText.setWidthFull();
-        daemonNotice.add(noticeTitle, noticeText, noticeStartBtn);
+        noticeInstallBtn.setVisible(false);
+        daemonNotice.add(noticeTitle, noticeText, UiFactory.group(noticeInstallBtn, noticeStartBtn));
         daemonNotice.setPadding(true);
         daemonNotice.setSpacing(false);
         daemonNotice.getStyle().set("gap", "10px");
@@ -362,14 +323,105 @@ public class DockerMgmtView extends ViewBase {
         daemonNotice.setVisible(true);
         if (!status.isDockerInstalled()) {
             noticeTitle.setText("目标机未安装 Docker");
-            noticeText.setValue("当前系统没有检测到 docker，请先安装后再进行管理。\n\n" + status.diagnosis());
+            boolean installable = status.canInstallDocker();
+            noticeText.setValue("当前系统没有检测到 docker。"
+                    + (installable
+                    ? "点「一键安装 Docker」会用平台内置脚本在目标机上装好并启动（按发行版自动选 apt / dnf / yum，"
+                    + "装不上再退回 get.docker.com 官方脚本），安装过程可能需要 1~5 分钟。\n\n"
+                    : "\n\n")
+                    + status.diagnosis());
             noticeStartBtn.setVisible(false);
+            noticeInstallBtn.setVisible(true);
+            noticeInstallBtn.setEnabled(installable);
         } else {
             noticeTitle.setText("Docker 服务未运行，已暂停所有 docker 命令");
             noticeText.setValue(status.diagnosis() + "\n\n启动命令：\n" + status.getStartCommandPreview());
+            noticeInstallBtn.setVisible(false);
             noticeStartBtn.setVisible(true);
             noticeStartBtn.setEnabled(!status.buildStartCommands().isEmpty());
         }
+    }
+
+    /**
+     * 一键安装 Docker：先弹确认窗把要执行的脚本原文摆出来（内置脚本，不做暗箱操作），
+     * 用户确认后在后台执行，完成后把安装日志原样展示并重新探测 daemon。
+     */
+    private void installDockerRequested() {
+        if (executor == null || executor.isClosed()) {
+            Dialogs.warn("请先连接目标服务器");
+            return;
+        }
+        DockerDaemonStatus status = executor.currentDaemonStatus();
+        if (status != null && !status.canInstallDocker()) {
+            Dialogs.warn(status.installBlockedReason());
+            return;
+        }
+
+        Dialog dialog = new Dialog();
+        dialog.setHeaderTitle("一键安装 Docker");
+        dialog.setWidth("980px");
+
+        Span target = new Span("目标服务器：" + executor.hostLabel()
+                + (status == null ? "" : "　登录用户 " + status.getLoginUser() + "（uid=" + status.getUid() + "）"
+                + "　执行方式：" + status.installCommandPreview()));
+        target.getStyle().set("overflow-wrap", "anywhere");
+
+        TextArea scriptArea = UiFactory.textArea();
+        scriptArea.setValue(DockerInstallScript.script());
+        scriptArea.setReadOnly(true);
+        scriptArea.setWidthFull();
+        scriptArea.setHeight("420px");
+        scriptArea.getElement().getStyle().set("font-family", "var(--lumo-font-family-monospace, monospace)");
+        scriptArea.getElement().getStyle().set("font-size", "var(--lumo-font-size-xs)");
+
+        Span hint = new Span("脚本只做「装 + 启动 + 验证」：按 /etc/os-release 选包管理器，"
+                + "已有 docker 时跳过安装；不写 daemon.json、不动已有容器和数据。安装日志会在执行完后完整回显。");
+        hint.addClassName("view-subtitle");
+        hint.getStyle().set("overflow-wrap", "anywhere");
+
+        VerticalLayout body = new VerticalLayout(target, UiFactory.group(
+                new Span("执行内容："), UiFactory.copyButton(this, DockerInstallScript.script())), scriptArea, hint);
+        body.setPadding(false);
+        body.getStyle().set("gap", "8px");
+        dialog.add(body);
+
+        Button cancel = UiFactory.button("取消", dialog::close);
+        Button install = UiFactory.primary("确认安装", () -> {
+            dialog.close();
+            setBusy(true, "正在安装 Docker（视网络与软件源，可能持续几分钟，请勿关闭页面）…");
+            DockerExecutor current = executor;
+            runAsync("安装 Docker", () -> current.installDocker(), raw -> {
+                setBusy(false, "");
+                DockerExecutor.DockerActionResult result = (DockerExecutor.DockerActionResult) raw;
+                showTextDialog(result.isSuccess() ? "Docker 安装完成" : "Docker 安装未完成",
+                        result.getReport());
+                checkDaemon(false);
+            }, e -> {
+                setBusy(false, "");
+                Dialogs.error("安装失败：" + StrUtil.emptyToDefault(e.getMessage(), "未知错误"));
+            });
+        });
+        dialog.getFooter().add(cancel, install);
+        dialog.open();
+    }
+
+    /** 只读文本弹窗：安装报告 / 命令输出这类长文本都走它 */
+    private void showTextDialog(String header, String text) {
+        Dialog dialog = new Dialog();
+        dialog.setHeaderTitle(header);
+        dialog.setWidth("980px");
+        TextArea area = UiFactory.textArea();
+        area.setValue(StrUtil.emptyToDefault(text, "（无输出）"));
+        area.setReadOnly(true);
+        area.setWidthFull();
+        area.setHeight("520px");
+        area.getElement().getStyle().set("font-family", "var(--lumo-font-family-monospace, monospace)");
+        area.getElement().getStyle().set("font-size", "var(--lumo-font-size-xs)");
+        VerticalLayout body = new VerticalLayout(area);
+        body.setPadding(false);
+        dialog.add(body);
+        dialog.getFooter().add(UiFactory.copyButton(this, area.getValue()), UiFactory.button("关闭", dialog::close));
+        dialog.open();
     }
 
     /** 占位面板上的「启动 Docker 服务」：后台执行 systemd/sysv 启动命令，完成后重新探测 */
@@ -380,11 +432,11 @@ public class DockerMgmtView extends ViewBase {
         }
         setBusy(true, "正在启动 docker 服务 …");
         runAsync("启动 docker 服务", () -> {
-            DockerExecutor.DaemonStartResult result = executor.startDaemon();
+            DockerExecutor.DockerActionResult result = executor.startDaemon();
             return result;
         }, result -> {
             setBusy(false, "");
-            DockerExecutor.DaemonStartResult r = (DockerExecutor.DaemonStartResult) result;
+            DockerExecutor.DockerActionResult r = (DockerExecutor.DockerActionResult) result;
             Dialogs.info(StrUtil.emptyToDefault(r.getReport(), "启动命令已执行"));
             checkDaemon(false);
         }, e -> {
@@ -504,7 +556,20 @@ public class DockerMgmtView extends ViewBase {
             List<DockerContainer> containers = (List<DockerContainer>) raw;
             allContainers = containers;
             applyContainerFilter();
+            notifyIfReconnected();
         }, this::onDockerFailure);
+    }
+
+    /**
+     * 连接被连接池空闲回收（默认 15 分钟）之后，第一次发命令会自动重建，用户无感；
+     * 这里补一句提示，免得他以为「连接一直好好的」或者页面出了怪问题。
+     * 计数是「取走即清零」的，所以只会在真正发生过重连的那一次弹。
+     */
+    private void notifyIfReconnected() {
+        DockerExecutor current = executor;
+        if (current != null && current.consumeReconnectNotice()) {
+            Dialogs.info("SSH 连接空闲超时已断开，已自动重连到 " + current.hostLabel());
+        }
     }
 
     private void applyContainerFilter() {
@@ -773,6 +838,7 @@ public class DockerMgmtView extends ViewBase {
             imageGrid.setItems(images);
             long dangling = images.stream().filter(DockerImage::isDangling).count();
             imageStatus.setText("共 " + images.size() + " 个镜像，悬空镜像 " + dangling + " 个");
+            notifyIfReconnected();
         }, this::onDockerFailure);
     }
 
@@ -907,35 +973,13 @@ public class DockerMgmtView extends ViewBase {
     }
 
     /**
-     * 往浏览器剪贴板写文本。
+     * 往浏览器剪贴板写文本并提示一句。
      * <p>
-     * 注意 {@code executeJs} 的收参方式：Flow 客户端把它交给
-     * {@code new Function($0, $1, ..., 表达式)}，最后一个参数是<b>函数体</b>而不是
-     * 函数表达式——之前写 {@code "(t) => {...}"} 等于造出一个函数然后立刻丢弃，
-     * 函数体一行都不会执行，「复制」按钮看起来就是坏的。
-     * <p>
-     * {@code navigator.clipboard} 只在安全上下文（HTTPS / localhost）存在，
-     * 内网 IP+HTTP 访问时走 {@code execCommand} 兜底（点击事件 5 秒内的用户激活仍有效）。
+     * 实现搬到 {@link UiFactory#copyToClipboard} 了（执行器脚本、命令输出几个页面都要用），
+     * 那段 {@code executeJs} 的坑写在那边，这里只保留「复制成功」的提示。
      */
     private void copyToClipboard(String text) {
-        getUI().ifPresent(ui -> ui.getPage().executeJs("""
-                const value = $0;
-                const fallbackCopy = (v) => {
-                    const ta = document.createElement('textarea');
-                    ta.value = v;
-                    ta.style.position = 'fixed';
-                    ta.style.top = '-1000px';
-                    document.body.appendChild(ta);
-                    ta.select();
-                    try { document.execCommand('copy'); } catch (e) {}
-                    document.body.removeChild(ta);
-                };
-                if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(value).catch(() => fallbackCopy(value));
-                } else {
-                    fallbackCopy(value);
-                }
-                """, text));
+        UiFactory.copyToClipboard(this, text);
         Dialogs.success("已复制：" + text);
     }
 

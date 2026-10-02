@@ -318,6 +318,52 @@ public final class UiFactory {
     }
 
     // ------------------------------------------------------------------
+    // 剪贴板
+    // ------------------------------------------------------------------
+
+    /**
+     * 往浏览器剪贴板写文本。
+     * <p>
+     * 注意 {@code executeJs} 的收参方式：Flow 客户端把它交给
+     * {@code new Function($0, $1, ..., 表达式)}，最后一个参数是<b>函数体</b>而不是
+     * 函数表达式——写成 {@code "(t) => {...}"} 等于造出一个函数然后立刻丢弃，
+     * 函数体一行都不会执行，「复制」按钮看起来就是坏的（DockerMgmtView 踩过）。
+     * <p>
+     * {@code navigator.clipboard} 只在安全上下文（HTTPS / localhost）存在，
+     * 内网 IP + HTTP 访问时走 {@code execCommand} 兜底（点击事件 5 秒内的用户激活仍有效）。
+     *
+     * @param owner 拿得到 UI 的任意组件（一般就是调用方自己）
+     */
+    public static void copyToClipboard(Component owner, String text) {
+        owner.getUI().ifPresent(ui -> ui.getPage().executeJs("""
+                const value = $0;
+                const fallbackCopy = (v) => {
+                    const ta = document.createElement('textarea');
+                    ta.value = v;
+                    ta.style.position = 'fixed';
+                    ta.style.top = '-1000px';
+                    document.body.appendChild(ta);
+                    ta.select();
+                    try { document.execCommand('copy'); } catch (e) {}
+                    document.body.removeChild(ta);
+                };
+                if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(value).catch(() => fallbackCopy(value));
+                } else {
+                    fallbackCopy(value);
+                }
+                """, text));
+    }
+
+    /** 「复制」按钮：把给定文本写进剪贴板，成功后轻提示一句。 */
+    public static Button copyButton(Component owner, String text) {
+        return button("复制", () -> {
+            copyToClipboard(owner, text);
+            Dialogs.success("已复制到剪贴板");
+        });
+    }
+
+    // ------------------------------------------------------------------
     // 上传（本地项目三个管理页共用的行内上传）
     // ------------------------------------------------------------------
 

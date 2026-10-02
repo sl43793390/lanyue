@@ -258,7 +258,8 @@ public class RemoteFileView extends ViewBase {
 
     private synchronized SSHClientUtil ensureSsh() throws IOException {
         // 连接进共享池（SshConnectionPool）：按 主机:端口:用户 复用，页面关闭不断开，
-        // 最后一次使用后保留 10 分钟，超时由池自动断开
+        // 最后一次使用后保留 15 分钟，超时由池自动断开。每次取用的地方都调本方法
+        // （而不是把连接存进字段），池里那条被回收之后下一次取用会自动重建
         return SshConnectionPool.acquire(presetHost);
     }
 

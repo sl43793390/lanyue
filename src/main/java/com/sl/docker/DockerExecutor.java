@@ -4,7 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import com.sl.docker.model.DockerDaemonStatus;
 import com.sl.entity.ConnectionInfo;
 import com.sl.util.SSHClientUtil;
-import com.sl.util.SshConnectionPool;
+import com.sl.util.SshCommandRunner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,15 +40,18 @@ import java.util.Map;
  * 界面拿到这个异常就弹窗问用户要不要把服务拉起来（{@link #startDaemon()}）。
  * <p>
  * <b>线程安全。</b>{@code SSHClientUtil.executeCommand} 每次会新开一个 channel，
- * 但同一个 SSHClient 上并发建 channel 的时序不好保证，这里用一把锁把所有命令串起来
- * （docker CLI 的操作本来就是毫秒级，串行不会成为瓶颈）。
+ * 但同一个 SSHClient 上并发建 channel 的时序不好保证，串行由
+ * {@link SshCommandRunner} 内部那把锁统一负责（docker CLI 的操作本来就是毫秒级，
+ * 串行不会成为瓶颈）。
+ * <p>
+ * <b>连接失效自动重连。</b>底层连接走共享池，空闲 15 分钟会被回收；执行器不再自己
+ * 存连接引用，改由 {@link SshCommandRunner} 在每次发命令前确认连接、必要时重建，
+ * 所以页面开一整天也不会出现「点了刷新报 SSH 连接未建立」。界面想知道发生过重连，
+ * 用 {@link #consumeReconnectNotice()}。
  */
 public class DockerExecutor implements Closeable {
 
     private static final Logger log = LoggerFactory.getLogger(DockerExecutor.class);
-
-    /** 退出码回传标记，正常输出里不可能出现这个前缀 */
-    private static final String EXIT_MARK = "__DOCKER_EXIT_CODE__:";
 
     /** daemon 判定为"在跑"时的缓存时长：期间不再重复探测 */
     private static final long DAEMON_CACHE_OK_MS = 30000L;
@@ -103,7 +106,13 @@ public class DockerExecutor implements Closeable {
                     + "echo \"PROBE_ERR=$(printf '%s' \"$DOUT\" | head -n 2 | tr '\\n' ' ')\"";
 
     private final ConnectionInfo info;
-    private final SSHClientUtil ssh;
+    /**
+     * 命令通道。走 {@link SshCommandRunner} 而不是自己存一条 {@code SSHClientUtil}：
+     * 连接进共享池后空闲 15 分钟会被回收，自己存的引用就成了一条死连接
+     * （用户现象：页面开着超过 15 分钟再点「刷新」直接报「SSH 连接未建立」）。
+     * 执行器每次发命令前都会确认连接，没了就地重建，调用方无感。
+     */
+    private final SshCommandRunner runner;
     /**
      * docker 命令前缀，默认自动探测。非 root 用户会被自动补成 {@code sudo -n docker}
      * （Rocky / Ubuntu 上普通用户默认不在 docker 组，直接跑 docker 是 permission denied）。
@@ -111,7 +120,6 @@ public class DockerExecutor implements Closeable {
     private volatile String commandPrefix;
     /** 用户在界面上显式填的前缀；填了就不允许被自动重算覆盖 */
     private final String configuredPrefix;
-    private final Object lock = new Object();
 
     /** daemon 状态缓存，只在 {@link #daemonLock} 里改 */
     private volatile DockerDaemonStatus daemonStatus;
@@ -125,8 +133,8 @@ public class DockerExecutor implements Closeable {
         }
         this.info = info;
         // 走共享连接池：Docker 管理 / Compose 管理 / 容器终端之外的命令操作共用一条连接，
-        // 标签关闭不断开，空闲 10 分钟后由池统一回收
-        this.ssh = SshConnectionPool.acquire(info);
+        // 标签关闭不断开，空闲 15 分钟后由池统一回收（回收后再用会自动重连）
+        this.runner = new SshCommandRunner(info);
         this.configuredPrefix = StrUtil.trimToEmpty(commandPrefix);
         this.commandPrefix = resolveCommandPrefix(this.configuredPrefix);
     }
@@ -230,9 +238,19 @@ public class DockerExecutor implements Closeable {
         }
     }
 
-    /** 给需要 SFTP（导出镜像、容器文件下载）的调用方用 */
+    /**
+     * 给需要 SFTP（导出镜像、容器文件下载）的调用方用。
+     * <p>
+     * 取之前会确认连接还活着：池子回收掉旧连接之后这里会重新建一条，
+     * 否则调用方拿到的是失效实例，{@code newSFTPClient()} 只会报「SSH 连接未建立」。
+     */
     public SSHClientUtil ssh() {
-        return ssh;
+        return runner.currentSsh();
+    }
+
+    /** 取走「自上次询问以来是否自动重连过」，供界面弹一次提示 */
+    public boolean consumeReconnectNotice() {
+        return runner.consumeReconnectNotice();
     }
 
     public boolean isClosed() {
@@ -348,11 +366,11 @@ public class DockerExecutor implements Closeable {
      * 某一条失败时立刻换下一条，全部失败会把 {@code systemctl is-active} 与
      * {@code journalctl -u docker} 的末尾几行一起带回来，否则用户只能看到一个"exit 1"。
      */
-    public DaemonStartResult startDaemon() throws IOException {
+    public DockerActionResult startDaemon() throws IOException {
         ensureOpen();
         DockerDaemonStatus before = probeDaemon(true);
         if (before.isDaemonRunning()) {
-            return new DaemonStartResult(true,
+            return new DockerActionResult(true,
                     "docker 服务已经在运行" + (StrUtil.isBlank(before.getServerVersion())
                             ? "" : "（服务端 " + before.getServerVersion() + "）"), before);
         }
@@ -384,7 +402,7 @@ public class DockerExecutor implements Closeable {
                     report.append("，服务端版本 ").append(after.getServerVersion());
                 }
                 report.append('\n');
-                return new DaemonStartResult(true, report.toString(), after);
+                return new DockerActionResult(true, report.toString(), after);
             }
             report.append("  ✗ 命令返回成功，但 ").append(DAEMON_START_WAIT_MS / 1000)
                     .append(" 秒内 daemon 仍未就绪\n");
@@ -392,12 +410,65 @@ public class DockerExecutor implements Closeable {
         report.append(serviceLogTail(before));
         DockerDaemonStatus after = probeDaemon(true);
         report.append("\n当前状态：").append(after.summary()).append('\n');
-        return new DaemonStartResult(false, report.toString(), after);
+        return new DockerActionResult(false, report.toString(), after);
+    }
+
+    /**
+     * 在目标机上安装 Docker Engine（界面「一键安装 Docker」的落地）。
+     * <p>
+     * 只在用户点过确认之后调用，脚本见 {@link DockerInstallScript}：按 {@code /etc/os-release}
+     * 分流到 apt / dnf / yum，装不上再退回 {@code get.docker.com} 官方脚本，最后启服务、
+     * 把登录用户加进 docker 组并验证 {@code docker info}。
+     * <p>
+     * <b>脚本怎么送到远端。</b>整段脚本用 {@link #q(String)} 转义后作为
+     * {@code bash -c} 的参数一次性执行，而不是 {@code echo … | bash} 喂标准输入——
+     * 后者有个经典坑：shell 从标准输入读脚本，脚本里任何一条会读标准输入的命令
+     * （{@code apt-get} 的确认、{@code curl | sh} 之类）都会把后面还没执行的脚本吃掉。
+     * 非 root 用 {@code sudo -n bash -c …}，不用给每一条命令单独加 sudo 前缀。
+     * <p>
+     * 安装失败不抛异常（除连接本身断了），而是把包管理器/脚本的原始输出原样带回界面，
+     * 否则用户只能看到一句「安装失败」。
+     */
+    public DockerActionResult installDocker() throws IOException {
+        ensureOpen();
+        DockerDaemonStatus before = probeDaemon(true);
+        if (before.isDockerInstalled()) {
+            return new DockerActionResult(true,
+                    "目标机上已经有 docker（" + before.getBinaryPath() + "），无需安装。\n"
+                            + "当前状态：" + before.summary(), before);
+        }
+        if (!before.canInstallDocker()) {
+            throw new IOException(before.installBlockedReason());
+        }
+        String command = (before.isRoot() ? "" : "sudo -n ") + "bash -c " + q(DockerInstallScript.script());
+        log.info("开始为 {} 安装 docker：登录用户 {}（uid={}），包管理器按 os-release 分流",
+                hostLabel(), before.getLoginUser(), before.getUid());
+
+        CmdResult result = exec(command);
+        StringBuilder report = new StringBuilder();
+        report.append(result.getOutput());
+        if (!report.isEmpty() && report.charAt(report.length() - 1) != '\n') {
+            report.append('\n');
+        }
+        if (!result.isOk()) {
+            report.append("安装脚本以退出码 ").append(result.getExitCode()).append(" 结束。\n");
+        }
+        // 装完必须重算命令前缀：装之前探不到 docker，前缀是裸的 "docker"（可能还带 sudo），
+        // 现在是绝对路径，且非 root 用户刚加了 docker 组、权限判定也变了
+        refreshCommandPrefix();
+        DockerDaemonStatus after = probeDaemon(true);
+        report.append("\n当前状态：").append(after.summary()).append('\n');
+        if (after.isDockerInstalled() && !after.isDaemonRunning()) {
+            report.append("docker 已装上但服务没起来，点「启动 Docker 服务」或「检测服务状态」重试。\n");
+        }
+        if (after.isDockerInstalled() && after.isDaemonRunning()) {
+            report.append("命令前缀：`").append(commandPrefix).append("`\n");
+        }
+        return new DockerActionResult(after.isDockerInstalled(), report.toString(), after);
     }
 
     /** 轮询等待 daemon 就绪；只在用户点了「启动」之后走，次数有上限 */
-    private boolean waitDaemonUp(long budgetMs) {
-        long deadline = System.currentTimeMillis() + budgetMs;
+    private boolean waitDaemonUp(long budgetMs) {        long deadline = System.currentTimeMillis() + budgetMs;
         while (System.currentTimeMillis() < deadline) {
             try {
                 Thread.sleep(DAEMON_START_POLL_MS);
@@ -457,20 +528,19 @@ public class DockerExecutor implements Closeable {
 
     /**
      * 执行一段原始 shell 命令，返回「退出码 + 输出」。
+     * <p>
+     * 连接层面的失效（池子空闲回收、服务端掐线）由 {@link SshCommandRunner} 兜住：
+     * 发命令前发现连接没了就重连，中途断线且确认连接已死则重连重试一次。
      */
     public CmdResult exec(String command) throws IOException {
         if (StrUtil.isBlank(command)) {
             throw new IOException("命令为空");
         }
-        String wrapped = command + " 2>&1; printf '\\n" + EXIT_MARK + "%s\\n' \"$?\"";
-        String raw;
-        synchronized (lock) {
-            ensureOpen();
-            raw = ssh.executeCommand(wrapped);
-        }
-        CmdResult result = CmdResult.parse(raw);
-        noteDaemonUnreachable(result);
-        return result;
+        ensureOpen();
+        SshCommandRunner.Result result = runner.exec(command);
+        CmdResult mapped = new CmdResult(result.getExitCode(), result.getOutput());
+        noteDaemonUnreachable(mapped);
+        return mapped;
     }
 
     /**
@@ -570,7 +640,7 @@ public class DockerExecutor implements Closeable {
      */
     public InputStream openStream(String command) throws IOException {
         ensureDaemonReady();
-        return ssh.openCommandStream(command + " 2>&1");
+        return runner.openStream(command + " 2>&1");
     }
 
     /**
@@ -582,7 +652,7 @@ public class DockerExecutor implements Closeable {
      */
     public InputStream openRawStream(String command) throws IOException {
         ensureDaemonReady();
-        return ssh.openCommandStream(command);
+        return runner.openStream(command);
     }
 
     private static String firstArg(String... args) {
@@ -595,20 +665,9 @@ public class DockerExecutor implements Closeable {
         return idx < 0 ? trimmed : trimmed.substring(idx + 1).trim();
     }
 
-    /** 解析探测脚本输出的 {@code KEY=VALUE} 行 */
+    /** 解析探测脚本输出的 {@code KEY=VALUE} 行（实现与 Linux 环境探测共用） */
     private static Map<String, String> parseKeyValues(String output) {
-        Map<String, String> map = new HashMap<String, String>();
-        if (null == output) {
-            return map;
-        }
-        for (String line : output.split("\\R")) {
-            String trimmed = line.trim();
-            int idx = trimmed.indexOf('=');
-            if (idx > 0) {
-                map.put(trimmed.substring(0, idx).trim(), trimmed.substring(idx + 1).trim());
-            }
-        }
-        return map;
+        return SshCommandRunner.parseKeyValues(output);
     }
 
     @Override
@@ -616,7 +675,8 @@ public class DockerExecutor implements Closeable {
         closed = true;
         daemonStatus = null;
         // 不再直接关 SSH：连接归共享连接池管（SshConnectionPool），关闭标签后
-        // 其它页面还能复用，空闲超 10 分钟由池自动回收
+        // 其它页面还能复用，空闲超 15 分钟由池自动回收
+        runner.close();
     }
 
     /* ------------------------------------------------------------------ */
@@ -636,82 +696,27 @@ public class DockerExecutor implements Closeable {
 
     /**
      * 一条命令的执行结果。
+     * <p>
+     * 直接继承 {@link SshCommandRunner.Result}：退出码 + 输出（stdout/stderr 已合并）
+     * 这套东西在 Docker 命令和普通 shell 命令上完全一样，没必要各存一份解析逻辑。
+     * 保留本类型只是为了不打断既有调用点上的 {@code DockerExecutor.CmdResult} 写法。
      */
-    public static final class CmdResult {
+    public static final class CmdResult extends SshCommandRunner.Result {
 
-        private final int exitCode;
-        private final String output;
+        private static final long serialVersionUID = 1L;
 
-        private CmdResult(int exitCode, String output) {
-            this.exitCode = exitCode;
-            this.output = output;
-        }
-
-        static CmdResult parse(String raw) {
-            if (null == raw) {
-                return new CmdResult(-1, "");
-            }
-            int idx = raw.lastIndexOf(EXIT_MARK);
-            if (idx < 0) {
-                // 没拿到退出码（连接被中断等），按失败处理但保留输出
-                return new CmdResult(-1, raw);
-            }
-            String output = raw.substring(0, idx);
-            // 去掉 marker 前面那个我们主动加的换行以及尾部的换行
-            if (output.endsWith("\n")) {
-                output = output.substring(0, output.length() - 1);
-            }
-            if (output.endsWith("\r")) {
-                output = output.substring(0, output.length() - 1);
-            }
-            String codeText = raw.substring(idx + EXIT_MARK.length()).trim();
-            int code;
-            try {
-                code = Integer.parseInt(codeText.isEmpty() ? "-1" : codeText);
-            } catch (NumberFormatException e) {
-                code = -1;
-            }
-            return new CmdResult(code, output);
-        }
-
-        public int getExitCode() {
-            return exitCode;
-        }
-
-        public String getOutput() {
-            return output;
-        }
-
-        public boolean isOk() {
-            return exitCode == 0;
-        }
-
-        /** 失败时给用户看的简短原因：优先取输出的最后几行 */
-        public String errorMessage() {
-            String text = StrUtil.trimToEmpty(output);
-            if (text.isEmpty()) {
-                return "退出码 " + exitCode + "（命令没有任何输出）";
-            }
-            String[] lines = text.split("\\R");
-            StringBuilder sb = new StringBuilder();
-            int from = Math.max(0, lines.length - 3);
-            for (int i = from; i < lines.length; i++) {
-                if (sb.length() > 0) {
-                    sb.append(" / ");
-                }
-                sb.append(lines[i].trim());
-            }
-            return sb.toString();
+        public CmdResult(int exitCode, String output) {
+            super(exitCode, output);
         }
     }
 
     /**
-     * 「启动 docker 服务」的结果：成功与否 + 给用户看的执行报告 + 最新状态。
+     * 「启动服务 / 安装 docker」这类远程动作的结果：成功与否 + 给用户看的执行报告 + 最新状态。
      * <p>
-     * 失败时不抛异常而是返回报告，因为报告里可能有 systemd 的报错、
+     * 失败时不抛异常而是返回报告，因为报告里可能有包管理器的报错、systemd 的报错、
      * {@code journalctl} 的末尾几行，这些内容要原样展示在弹窗里才有用。
      */
-    public static final class DaemonStartResult implements Serializable {
+    public static final class DockerActionResult implements Serializable {
 
         private static final long serialVersionUID = 1L;
 
@@ -719,7 +724,7 @@ public class DockerExecutor implements Closeable {
         private final String report;
         private final DockerDaemonStatus status;
 
-        DaemonStartResult(boolean success, String report, DockerDaemonStatus status) {
+        DockerActionResult(boolean success, String report, DockerDaemonStatus status) {
             this.success = success;
             this.report = report;
             this.status = status;

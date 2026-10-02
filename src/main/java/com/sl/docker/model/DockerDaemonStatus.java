@@ -211,6 +211,35 @@ public class DockerDaemonStatus implements Serializable {
     }
 
     /**
+     * 能不能替用户装上 docker。
+     * <p>
+     * 装软件要 root：要么当前就是 root，要么有免密 sudo（{@code sudo -n} 能过）。
+     * 两者都不满足就只能让用户换 root 账号连，界面据此把「一键安装」按钮置灰并说明原因。
+     */
+    public boolean canInstallDocker() {
+        return isRoot() || sudoAvailable;
+    }
+
+    /** 不能一键安装时，给用户一句能照着做的解释 */
+    public String installBlockedReason() {
+        if (canInstallDocker()) {
+            return "";
+        }
+        return "当前登录用户 " + StrUtil.emptyToDefault(loginUser, "?") + "（uid=" + StrUtil.emptyToDefault(uid, "?")
+                + "）不是 root，且免密 sudo 不可用，无法在目标机上安装 Docker。\n"
+                + "请改用 root 账号连接，或先在该机器上给这个账号配好免密 sudo。\n"
+                + "手动安装：Rocky / CentOS 8+ 用 dnf install -y docker-ce，CentOS 7 用 yum install -y docker，"
+                + "Ubuntu / Debian 用 apt-get install -y docker.io。";
+    }
+
+    /** 安装脚本的执行方式预览（root 直跑，非 root 走 sudo -n） */
+    public String installCommandPreview() {
+        return canInstallDocker()
+                ? (isRoot() ? "目标机以 root 执行内置安装脚本" : "目标机以 sudo -n 执行内置安装脚本")
+                : "当前账号权限不足，无法安装";
+    }
+
+    /**
      * 服务管理命令要不要加 sudo。
      * 非 root 且免密 sudo 不可用时返回空串，调用方据此判断"没法代为启动"。
      */
@@ -271,8 +300,13 @@ public class DockerDaemonStatus implements Serializable {
         if (!dockerInstalled) {
             sb.append("目标机上没有找到 docker 命令（已探测 docker、/usr/bin/docker、")
                     .append("/usr/local/bin/docker、/usr/sbin/docker、/snap/bin/docker）。\n")
-                    .append("安装方式：CentOS 7 用 yum install -y docker；Rocky 8/9/10 用 dnf install -y docker-ce；")
-                    .append("Ubuntu 22.04 用 apt install -y docker.io。");
+                    .append("可以直接点「一键安装 Docker」，由平台内置脚本按发行版自动安装");
+            if (!canInstallDocker()) {
+                sb.append("；但当前登录用户 ").append(StrUtil.emptyToDefault(loginUser, "?"))
+                        .append(" 不是 root 且免密 sudo 不可用，装不了，需要先用 root 账号连接");
+            } else {
+                sb.append("（需要目标机能访问发行版仓库或 download.docker.com）");
+            }
             return sb.toString();
         }
         if (daemonRunning) {

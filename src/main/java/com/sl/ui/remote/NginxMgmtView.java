@@ -407,7 +407,7 @@ public class NginxMgmtView extends ViewBase {
             Dialogs.warn("权限不足，无法操作 nginx");
             return;
         }
-        SSHClientUtil client = ssh;
+        SSHClientUtil client = liveSsh();
         if (client == null) {
             Dialogs.warn("请先连接目标服务器");
             return;
@@ -427,7 +427,7 @@ public class NginxMgmtView extends ViewBase {
 
     /** 后台刷新一次运行状态（启动/停止/重载后调用）。 */
     private void refreshAsync() {
-        SSHClientUtil client = ssh;
+        SSHClientUtil client = liveSsh();
         if (client == null) {
             return;
         }
@@ -436,7 +436,7 @@ public class NginxMgmtView extends ViewBase {
     }
 
     private void showStatus() {
-        SSHClientUtil client = ssh;
+        SSHClientUtil client = liveSsh();
         if (client == null) {
             Dialogs.warn("请先连接目标服务器");
             return;
@@ -459,7 +459,7 @@ public class NginxMgmtView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void loadConfig() {
-        SSHClientUtil client = ssh;
+        SSHClientUtil client = liveSsh();
         if (client == null) {
             Dialogs.warn("请先连接目标服务器");
             return;
@@ -497,7 +497,7 @@ public class NginxMgmtView extends ViewBase {
             Dialogs.warn("权限不足，无法保存配置");
             return;
         }
-        SSHClientUtil client = ssh;
+        SSHClientUtil client = liveSsh();
         if (client == null) {
             Dialogs.warn("请先连接目标服务器");
             return;
@@ -672,8 +672,39 @@ public class NginxMgmtView extends ViewBase {
 
     private void closeSsh() {
         // 连接归共享连接池（SshConnectionPool）管：这里只解除本页引用，
-        // 不真正断开——其它页面还能复用，空闲超 10 分钟由池自动回收
+        // 不真正断开——其它页面还能复用，空闲超 15 分钟由池自动回收
         ssh = null;
+    }
+
+    /**
+     * 取一条可用的 SSH 连接。
+     * <p>
+     * 页面把连接存在字段里长期复用，而共享连接池空闲 15 分钟会把这条连接回收掉——
+     * 之后字段里指向的就是一条死连接（底层 sshClient 已被置空），再点「启动 / 重载」
+     * 只会得到「SSH 连接未建立，无法执行命令」，而且不重新点「连接」就永远不会好。
+     * 所以每次用之前都过一遍这里：连接没了就重新 acquire（池子会把失效条目丢掉重建）。
+     * 注意本方法可能跑在后台线程上，里面不能碰 UI。
+     */
+    private SSHClientUtil liveSsh() {
+        SSHClientUtil current = ssh;
+        if (current == null) {
+            return null;
+        }
+        if (current.isConnected()) {
+            return current;
+        }
+        ConnectionInfo info = hostCombo.getValue();
+        if (info == null) {
+            return current;
+        }
+        try {
+            ssh = SshConnectionPool.acquire(info);
+            log.info("nginx 页面的共享 SSH 连接已失效，已自动重连：{}", info.getIdHost());
+            return ssh;
+        } catch (Exception e) {
+            log.warn("nginx 页面自动重连失败：{}", e.getMessage());
+            return current;
+        }
     }
 
     private static boolean hasPermission(String code) {

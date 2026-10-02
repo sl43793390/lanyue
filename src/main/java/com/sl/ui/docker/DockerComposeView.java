@@ -152,36 +152,7 @@ public class DockerComposeView extends ViewBase {
     }
 
     private void loadCandidateHosts() {
-        List<ConnectionInfo> list = new ArrayList<>();
-        Set<String> seen = new LinkedHashSet<>();
-        try {
-            List<ConnectionInfo> fromDb = connectionInfoMapper.selectList(new QueryWrapper<>());
-            if (fromDb != null) {
-                for (ConnectionInfo info : fromDb) {
-                    if (info != null && StrUtil.isNotBlank(info.getIdHost())
-                            && seen.add(info.getIdHost() + ":" + StrUtil.blankToDefault(info.getCdPort(), "22"))) {
-                        list.add(info);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.warn("读取数据库中的服务器列表失败：{}", e.getMessage());
-        }
-        try {
-            for (String line : com.sl.util.Util.getRemoteServerList()) {
-                String[] split = line.split("=");
-                if (split.length < 4) {
-                    continue;
-                }
-                String keyPath = split.length > 4 ? split[4] : null;
-                ConnectionInfo info = new ConnectionInfo(split[0], split[3], split[1], split[2], keyPath);
-                if (seen.add(info.getIdHost() + ":" + StrUtil.blankToDefault(info.getCdPort(), "22"))) {
-                    list.add(info);
-                }
-            }
-        } catch (Exception e) {
-            log.warn("读取 remoteServerList.conf 失败：{}", e.getMessage());
-        }
+        List<ConnectionInfo> list = com.sl.ui.component.HostCandidates.load(connectionInfoMapper);
         candidateHosts = list;
         hostCombo.setItems(list);
         if (list.isEmpty()) {
@@ -357,7 +328,20 @@ public class DockerComposeView extends ViewBase {
             long running = list.stream().filter(p -> "运行中".equals(p.getStatusLabel())).count();
             statusLabel.setText("共 " + list.size() + " 个项目，运行中 " + running + " 个"
                     + "（状态更新于 " + new SimpleDateFormat("HH:mm:ss").format(new Date()) + "）");
+            notifyIfReconnected();
         }, this::onComposeFailure);
+    }
+
+    /**
+     * 页面开着超过 15 分钟时，共享连接池会把这条空闲 SSH 回收掉——以前这一步之后
+     * 点「刷新」会直接报「SSH 连接未建立」，现在由 {@code SshCommandRunner} 自动重连，
+     * 这里只补一句提示，让用户知道刚才发生过重连（不是网页卡了）。
+     */
+    private void notifyIfReconnected() {
+        DockerExecutor current = executor;
+        if (current != null && current.consumeReconnectNotice()) {
+            Dialogs.info("SSH 连接空闲超时已断开，已自动重连到 " + current.hostLabel());
+        }
     }
 
     /**

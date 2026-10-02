@@ -29,10 +29,15 @@ import java.util.concurrent.TimeUnit;
  * </ul>
  * <p>
  * <b>空闲回收。</b>每次 {@link #acquire} 都会刷新最后使用时间；后台回收线程每分钟
- * 扫一遍，空闲超过 {@link #IDLE_KEEP_MS}（默认 10 分钟）的连接自动断开并移出池子。
- * 需要注意的是「使用」以 acquire 为准：单个超过 10 分钟的长传输期间若没有新的
+ * 扫一遍，空闲超过 {@link #IDLE_KEEP_MS}（15 分钟）的连接自动断开并移出池子。
+ * 需要注意的是「使用」以 acquire 为准：单个超过 15 分钟的长传输期间若没有新的
  * acquire，理论上可能被回收线程判定为空闲——现有操作（受 100MB 上传上限约束）
  * 都远短于这个时长，不为它引入引用计数。
+ * <p>
+ * <b>谁持有连接谁就得自己兜住回收。</b>池子回收掉的是「这条连接」，不是调用方手里的
+ * 引用——页面如果把 {@link SSHClientUtil} 存进字段长期持有，15 分钟后那条引用就指向
+ * 一条关掉的连接。所有长期持有连接的调用方都必须把「连接没了就重新 acquire」写进
+ * 自己的执行路径，{@link SshCommandRunner} 就是这件事的标准实现。
  * <p>
  * <b>线程安全。</b>sshj 的每条 exec 命令都是独立的 session 通道，多线程并发执行
  * 命令是安全的；共享的 SFTP 客户端在 {@link SSHClientUtil#getSftpClient()} 里做了
@@ -42,8 +47,8 @@ public final class SshConnectionPool {
 
     private static final Logger log = LoggerFactory.getLogger(SshConnectionPool.class);
 
-    /** 空闲保留时长：最后一次使用后默认保留 10 分钟，超时自动断开 */
-    private static final long IDLE_KEEP_MS = 15 * 60 * 1000L;
+    /** 空闲保留时长：最后一次使用后保留 15 分钟，超时自动断开（长期持有连接的调用方必须能自愈，见类注释） */
+    public static final long IDLE_KEEP_MS = 15 * 60 * 1000L;
 
     /** 回收线程的扫描间隔 */
     private static final long SWEEP_INTERVAL_SECONDS = 60;
