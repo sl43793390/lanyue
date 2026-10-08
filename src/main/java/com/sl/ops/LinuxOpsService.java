@@ -558,12 +558,18 @@ public class LinuxOpsService {
                 """);
     }
 
-    /** 系统日志尾部：journalctl 优先，退到 /var/log/messages、/var/log/syslog */
+    /** 系统日志尾部：journalctl 优先；普通账号读不到 journal（CentOS 7 默认只有 adm / systemd-journal 组能看全量）时退到 /var/log/messages、/var/log/syslog */
     public String systemLog(int lines) throws IOException {
         int count = (lines <= 0 || lines > 2000) ? 200 : lines;
         return run("""
                 if command -v journalctl >/dev/null 2>&1; then
-                  journalctl -n %d --no-pager 2>/dev/null
+                  JOUT=$(journalctl -n %d --no-pager 2>/dev/null)
+                  if [ -n "$JOUT" ]; then
+                    echo "$JOUT"
+                  else
+                    echo "（当前账号读不到 journal，尝试 /var/log/messages）"
+                    tail -n %d /var/log/messages 2>/dev/null || echo "（/var/log/messages 也读不到，需要 root 或加入 adm / systemd-journal 组）"
+                  fi
                 elif [ -f /var/log/messages ]; then
                   tail -n %d /var/log/messages
                 elif [ -f /var/log/syslog ]; then
@@ -571,7 +577,7 @@ public class LinuxOpsService {
                 else
                   echo "找不到可读的系统日志（journalctl / /var/log/messages / /var/log/syslog 都没有）"
                 fi
-                """.formatted(count, count, count));
+                """.formatted(count, count, count, count));
     }
 
     /** 时间同步状态（证书、集群、定时任务全依赖系统时间准） */
@@ -793,29 +799,6 @@ public class LinuxOpsService {
     /** 目标用户是不是当前登录用户自己（自己改自己的 crontab 不需要任何提权） */
     private static boolean isSelf(String userName, LinuxEnv env) {
         return StrUtil.isBlank(userName) || userName.equals(env.getLoginUser());
-    }
-
-    /**
-     * 电源操作：重启 / 关机 / 取消已排队的关机。
-     * <p>
-     * 界面必须先在确认弹窗里让用户看清目标机是哪台——这条命令一发，SSH 会话就断了。
-     */
-    public String powerAction(String action, LinuxEnv env) throws IOException {
-        String prefix = rootPrefix(env, "重启或关机");
-        String command = switch (StrUtil.trimToEmpty(action)) {
-            case "reboot" -> prefix + "shutdown -r now 2>&1 || " + prefix + "reboot 2>&1";
-            case "poweroff" -> prefix + "shutdown -h now 2>&1 || " + prefix + "poweroff 2>&1";
-            case "cancel" -> prefix + "shutdown -c 2>&1";
-            default -> throw new IOException("不支持的操作：" + action);
-        };
-        try {
-            SshCommandRunner.Result result = runner.exec(command);
-            return "已向目标机下发命令：\n$ " + command + "\n\n" + result.getOutput() + "\n";
-        } catch (IOException e) {
-            // 关机瞬间服务端把连接断开是正常现象，不当失败处理
-            return "已向目标机下发命令：\n$ " + command + "\n\n"
-                    + "连接在命令下发后被断开（关机 / 重启的正常现象）：" + e.getMessage() + "\n";
-        }
     }
 
     /* ================================================================== */

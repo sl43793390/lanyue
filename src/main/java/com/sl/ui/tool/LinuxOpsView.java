@@ -5,6 +5,7 @@ import com.sl.entity.ConnectionInfo;
 import com.sl.mapper.ConnectionInfoMapper;
 import com.sl.ops.LinuxOpsService;
 import com.sl.ops.model.LinuxEnv;
+import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.HostCandidates;
 import com.sl.ui.component.UiFactory;
@@ -24,9 +25,7 @@ import com.vaadin.flow.component.orderedlayout.FlexComponent;
 import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.textfield.PasswordField;
-import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.component.textfield.TextField;
-import com.vaadin.flow.data.value.ValueChangeMode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
@@ -398,17 +397,14 @@ public class LinuxOpsView extends ViewBase {
         String owner = StrUtil.isBlank(target) ? env.getLoginUser() : target;
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle("编辑 crontab（用户：" + owner + "）");
-        dialog.setWidth("1000px");
+        dialog.setWidth("min(1000px, 94vw)");
 
-        TextArea area = UiFactory.textArea();
-        // TextArea 默认 ON_CHANGE：值只在失焦时才同步到服务端，靠「点保存顺便失焦」读新值有竞态
-        // （2026-10-02 排查：保存时服务端 getValue() 拿到旧值）。EAGER 边输入边同步，不依赖失焦。
-        area.setValueChangeMode(ValueChangeMode.EAGER);
-        area.setValue(StrUtil.emptyToDefault(content, ""));
-        area.setWidthFull();
-        area.setHeight("440px");
-        area.getElement().getStyle().set("font-family", "var(--lumo-font-family-monospace, monospace)");
-        area.getElement().getStyle().set("font-size", "var(--lumo-font-size-xs)");
+        // crontab 每行末尾都是一条 shell 命令，用 shell 语法高亮；
+        // CodeEditor 的 getValue() 永远是最新值，不需要 TextArea 那套 EAGER 失焦竞态规避
+        CodeEditor editor = new CodeEditor(CodeEditor.MODE_SHELL);
+        editor.setValue(StrUtil.emptyToDefault(content, ""));
+        editor.setWidthFull();
+        editor.setHeight("440px");
 
         Span hint = new Span("每行一条，格式：分 时 日 月 周 命令（如 0 2 * * * /opt/backup.sh）。"
                 + "保存会整体替换用户 " + owner + " 的 crontab，原内容会先备份到目标机（~/crontab.bak-时间戳 或 /tmp/）。"
@@ -416,14 +412,14 @@ public class LinuxOpsView extends ViewBase {
         hint.addClassName("view-subtitle");
         hint.getStyle().set("overflow-wrap", "anywhere");
 
-        VerticalLayout body = new VerticalLayout(area, hint);
+        VerticalLayout body = new VerticalLayout(editor, hint);
         body.setPadding(false);
         body.getStyle().set("gap", "10px");
         dialog.add(body);
         dialog.getFooter().add(UiFactory.copyButton(this, content),
                 UiFactory.button("取消", dialog::close),
                 UiFactory.primary("保存", () -> {
-                    String edited = area.getValue();
+                    String edited = editor.getValue();
                     log.info("crontab 编辑器保存触发：user={} contentLen={}", owner, edited == null ? -1 : edited.length());
                     dialog.close();
                     Dialogs.confirm("保存 crontab",
@@ -458,13 +454,7 @@ public class LinuxOpsView extends ViewBase {
                 actionRow(
                         selinuxOffTemp,
                         selinuxOffPerm,
-                        selinuxOnTemp,
-                        privileged("取消已排队的关机", () -> confirmPower("cancel", "取消已排队的关机",
-                                "将执行 shutdown -c，取消正在倒计时的关机/重启。")),
-                        privileged("重启系统", () -> confirmPower("reboot", "重启目标机",
-                                "将执行 shutdown -r now，目标机上所有服务会中断，SSH 连接会断开。")),
-                        privileged("关机", () -> confirmPower("poweroff", "关闭目标机",
-                                "将执行 shutdown -h now，目标机会彻底停止，需要有人到机房（或控制台）开机。"))));
+                        selinuxOnTemp));
     }
 
     // ------------------------------------------------------------------
@@ -777,16 +767,6 @@ public class LinuxOpsView extends ViewBase {
                 what, () -> query(what, () -> service.setSelinux(enabled, permanent, env)));
     }
 
-    private void confirmPower(String action, String header, String message) {
-        if (!checkEnv()) {
-            return;
-        }
-        Dialogs.confirmDanger(header,
-                message + "\n\n目标机：" + env.getHostname() + "（" + env.getOsRelease() + "）\n"
-                        + "确认这一台就是你要操作的吗？操作后 SSH 连接会断开。",
-                header, () -> query(header, () -> service.powerAction(action, env)));
-    }
-
     // ------------------------------------------------------------------
     // 执行骨架：后台跑 → 输出弹窗
     // ------------------------------------------------------------------
@@ -807,20 +787,18 @@ public class LinuxOpsView extends ViewBase {
         });
     }
 
-    /** 输出弹窗：等宽只读，带复制（命令输出经常要贴给别人看） */
+    /** 输出弹窗：CodeEditor 只读渲染（等宽 + 行号），带复制（命令输出经常要贴给别人看） */
     private void showOutput(String title, String text) {
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle(title);
-        dialog.setWidth("1000px");
-        TextArea area = UiFactory.textArea();
+        dialog.setWidth("min(1000px, 94vw)");
+        CodeEditor editor = new CodeEditor(CodeEditor.MODE_PLAIN);
         String content = StrUtil.isEmpty(text) ? "（命令没有任何输出）" : text;
-        area.setValue(content);
-        area.setReadOnly(true);
-        area.setWidthFull();
-        area.setHeight("560px");
-        area.getElement().getStyle().set("font-family", "var(--lumo-font-family-monospace, monospace)");
-        area.getElement().getStyle().set("font-size", "var(--lumo-font-size-xs)");
-        VerticalLayout body = new VerticalLayout(area);
+        editor.setValue(content);
+        editor.setReadOnly(true);
+        editor.setWidthFull();
+        editor.setHeight("560px");
+        VerticalLayout body = new VerticalLayout(editor);
         body.setPadding(false);
         dialog.add(body);
         dialog.getFooter().add(UiFactory.copyButton(this, content), UiFactory.button("关闭", dialog::close));
