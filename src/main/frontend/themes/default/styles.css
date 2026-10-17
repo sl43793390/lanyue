@@ -1023,3 +1023,486 @@ vaadin-text-area[has-label]::part(label) {
 vaadin-grid::part(odd-row-cell) {
     background-color: #f0fbee;
 }
+
+/* ==========================================================
+   正则表达式测试
+   ========================================================== */
+
+/* 常用表达式一排小按钮，浅绿底色（文档规则优先于 shadow 里的 :host 规则，
+   与 .row-actions 同一套做法），悬浮加深一档 */
+.regex-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    width: 100%;
+}
+
+.regex-chips vaadin-button {
+    font-size: var(--lumo-font-size-s);
+    background-color: var(--lumo-success-color-10pct);
+    color: var(--lumo-success-text-color);
+    border-radius: var(--lumo-border-radius-s);
+    transition: background-color 0.12s ease;
+}
+
+.regex-chips vaadin-button:hover {
+    background-color: var(--lumo-success-color-20pct);
+}
+
+/* 强制换行断点：占满一行的零高元素，把后面的补充项挤到下一行 */
+.regex-chip-break {
+    flex-basis: 100%;
+    height: 0;
+}
+
+/* 状态行：绿=正常，红=语法错误/未匹配 */
+.regex-status-ok {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-success-text-color);
+    white-space: nowrap;
+}
+
+.regex-status-err {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-error-text-color);
+    white-space: nowrap;
+}
+
+/* 结果预览：等宽、保留换行、命中高亮 */
+.regex-preview {
+    font-family: var(--lumo-font-family-monospace);
+    font-size: var(--lumo-font-size-s);
+    white-space: pre-wrap;
+    word-break: break-all;
+    border: 1px solid var(--lumo-contrast-20pct);
+    border-radius: var(--lumo-border-radius-m);
+    padding: 10px;
+    min-height: 90px;
+    max-height: 320px;
+    overflow: auto;
+    background: var(--lumo-base-color);
+}
+
+.regex-hit {
+    background: var(--lumo-primary-color-50pct);
+    color: var(--lumo-base-color);
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+.regex-miss {
+    color: var(--lumo-error-text-color);
+}
+
+/* 页脚速查表 */
+.regex-cheat {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--lumo-font-size-s);
+}
+
+.regex-cheat th,
+.regex-cheat td {
+    border: 1px solid var(--lumo-contrast-20pct);
+    padding: 4px 8px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.regex-cheat th {
+    background: var(--lumo-contrast-10pct);
+}
+
+.regex-cheat td:first-child {
+    font-family: var(--lumo-font-family-monospace);
+    white-space: nowrap;
+}
+
+/* ==================================================================
+ * Cron 表达式生成器（其他工具 → Cron表达式生成器）
+ * ================================================================== */
+
+.cron-generator-view {
+    min-width: 960px;
+}
+
+/* 顶部三个页签 */
+.cron-tabs {
+    margin-bottom: 4px;
+    flex-shrink: 0;
+}
+
+/* 三栏主体：左导航 / 中编辑区 / 右结果面板 */
+.cron-body {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+    width: 100%;
+}
+
+/* —— 左侧字段导航 —— */
+.cron-nav {
+    flex: 0 0 140px;
+    width: 140px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.cron-nav-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border-radius: var(--lumo-border-radius-m);
+    background: var(--lumo-contrast-5pct);
+    cursor: pointer;
+    user-select: none;
+}
+
+.cron-nav-item:hover {
+    background: var(--lumo-contrast-10pct);
+}
+
+.cron-nav-item.selected {
+    background: var(--lumo-primary-color-10pct);
+    box-shadow: inset 0 0 0 1.5px var(--lumo-primary-color);
+}
+
+.cron-nav-name {
+    font-size: var(--lumo-font-size-m);
+    color: var(--lumo-header-text-color);
+}
+
+.cron-nav-item.selected .cron-nav-name {
+    color: var(--lumo-primary-text-color);
+    font-weight: 600;
+}
+
+.cron-nav-value {
+    font-family: var(--lumo-font-family-monospace);
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+    max-width: 64px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cron-nav-item.selected .cron-nav-value {
+    color: var(--lumo-primary-text-color);
+    font-weight: 600;
+}
+
+/* —— 中间编辑列 —— */
+.cron-editor-column {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.cron-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cron-editor-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.cron-field-title {
+    font-size: var(--lumo-font-size-xl);
+    font-weight: 600;
+    color: var(--lumo-header-text-color);
+}
+
+.cron-allowed {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+}
+
+/* 单个模式行 */
+.cron-option-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 14px;
+    border-radius: var(--lumo-border-radius-m);
+    background: var(--lumo-contrast-5pct);
+    cursor: pointer;
+    flex-wrap: wrap;
+}
+
+.cron-option-row.selected {
+    background: var(--lumo-primary-color-10pct);
+    box-shadow: inset 0 0 0 1.5px var(--lumo-primary-color);
+}
+
+.cron-radio {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--lumo-contrast-40pct);
+    box-sizing: border-box;
+    background: var(--lumo-base-color);
+}
+
+.cron-option-row.selected .cron-radio {
+    border-color: var(--lumo-primary-color);
+    background: radial-gradient(circle, var(--lumo-primary-color) 0 45%, var(--lumo-base-color) 50% 100%);
+}
+
+.cron-opt-name {
+    font-weight: 600;
+    color: var(--lumo-header-text-color);
+    flex-shrink: 0;
+}
+
+.cron-option-row.selected .cron-opt-name {
+    color: var(--lumo-primary-text-color);
+}
+
+.cron-opt-desc {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+}
+
+.cron-opt-desc code {
+    color: var(--lumo-primary-text-color);
+    font-family: var(--lumo-font-family-monospace);
+}
+
+/* 指定值芯片区 */
+.cron-chips-area {
+    background: var(--lumo-contrast-5pct);
+    border-radius: var(--lumo-border-radius-m);
+    padding: 12px 14px;
+}
+
+.cron-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.cron-chip {
+    padding: 6px 14px;
+    border-radius: var(--lumo-border-radius-m);
+    background: var(--lumo-contrast-10pct);
+    color: var(--lumo-secondary-text-color);
+    font-family: var(--lumo-font-family-monospace);
+    font-size: var(--lumo-font-size-s);
+    cursor: pointer;
+    user-select: none;
+}
+
+.cron-chip:hover {
+    background: var(--lumo-contrast-20pct);
+}
+
+.cron-chip.selected {
+    background: var(--lumo-primary-color);
+    color: var(--lumo-base-color);
+    font-weight: 600;
+}
+
+/* 底部字段值汇总条 */
+.cron-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.cron-summary-item {
+    background: var(--lumo-base-color);
+    border: 1px solid var(--lumo-contrast-10pct);
+    border-radius: var(--lumo-border-radius-m);
+    padding: 6px 12px;
+    min-width: 68px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    cursor: pointer;
+}
+
+.cron-summary-item:hover {
+    border-color: var(--lumo-primary-color);
+}
+
+.cron-summary-label {
+    font-size: var(--lumo-font-size-xs);
+    color: var(--lumo-tertiary-text-color);
+}
+
+.cron-summary-value {
+    font-family: var(--lumo-font-family-monospace);
+    font-size: var(--lumo-font-size-m);
+    font-weight: 600;
+    color: var(--lumo-primary-text-color);
+}
+
+/* —— 右侧结果面板 —— */
+.cron-panel {
+    flex: 0 0 340px;
+    width: 340px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.cron-card {
+    background: var(--lumo-base-color);
+    border: 1px solid var(--lumo-contrast-10pct);
+    border-radius: var(--lumo-border-radius-l);
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.cron-card-title {
+    font-size: var(--lumo-font-size-l);
+    font-weight: 600;
+    color: var(--lumo-header-text-color);
+}
+
+.cron-card-sub {
+    font-size: var(--lumo-font-size-xs);
+    color: var(--lumo-tertiary-text-color);
+    margin-top: -4px;
+}
+
+.cron-expr-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--lumo-contrast-5pct);
+    border-radius: var(--lumo-border-radius-m);
+    padding: 8px 10px;
+}
+
+.cron-expr {
+    flex: 1 1 auto;
+    min-width: 0;
+    font-family: var(--lumo-font-family-monospace);
+    font-size: var(--lumo-font-size-m);
+    font-weight: 600;
+    letter-spacing: 1px;
+    color: var(--lumo-header-text-color);
+    word-break: break-all;
+}
+
+.cron-copy-btn {
+    flex-shrink: 0;
+}
+
+.cron-btn-row {
+    display: flex;
+    gap: 8px;
+}
+
+.cron-explain {
+    background: var(--lumo-primary-color-10pct);
+    border-radius: var(--lumo-border-radius-m);
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.cron-explain-label {
+    font-size: var(--lumo-font-size-xs);
+    color: var(--lumo-secondary-text-color);
+}
+
+.cron-explain-text {
+    font-size: var(--lumo-font-size-m);
+    font-weight: 600;
+    color: var(--lumo-primary-text-color);
+    line-height: 1.5;
+    word-break: break-all;
+}
+
+.cron-runs {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.cron-run {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--lumo-contrast-5pct);
+    border-radius: var(--lumo-border-radius-m);
+    padding: 7px 12px;
+}
+
+.cron-run-time {
+    font-family: var(--lumo-font-family-monospace);
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-header-text-color);
+}
+
+.cron-run-label {
+    font-size: var(--lumo-font-size-xs);
+    color: var(--lumo-tertiary-text-color);
+}
+
+.cron-run-empty {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-tertiary-text-color);
+}
+
+.cron-examples {
+    display: flex;
+    flex-direction: column;
+}
+
+.cron-example {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 0;
+    border-bottom: 1px dashed var(--lumo-contrast-10pct);
+}
+
+.cron-example:last-child {
+    border-bottom: none;
+}
+
+.cron-example-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.cron-example-label {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-header-text-color);
+}
+
+.cron-example-expr {
+    font-family: var(--lumo-font-family-monospace);
+    font-size: var(--lumo-font-size-xs);
+    color: var(--lumo-tertiary-text-color);
+    word-break: break-all;
+}
+
+.cron-apply-btn {
+    color: var(--lumo-primary-text-color);
+    font-weight: 600;
+    flex-shrink: 0;
+}
