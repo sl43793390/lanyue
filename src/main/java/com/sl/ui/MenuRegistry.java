@@ -79,12 +79,16 @@ public final class MenuRegistry {
                     new Item("容器和镜像管理", DockerMgmtView.class, Constants.UPDATE),
                     new Item("Docker-Compose管理", DockerComposeView.class, Constants.UPDATE))),
 
-            new Group("其他工具", List.of(
+            new Group("drawio", List.of(
+                    new Item("drawio绘图", FlowchartView.class, null))),
+
+            new Group("Linux工具", List.of(
                     new Item("常用Linux命令", LinuxOpsView.class, Constants.UPDATE),
-                    new Item("加密工具", EncryptionView.class, null),
-                    new Item("drawio绘图", FlowchartView.class, null),
                     new Item("脚本管理", ScriptMgmtView.class, Constants.UPDATE),
                     new Item("自定义脚本监控", ScriptMonitorView.class, Constants.QUERY))),
+
+            new Group("其他工具", List.of(
+                    new Item("加密工具", EncryptionView.class, null))),
 
             new Group("用户管理", List.of(
                     new Item("用户管理", UserManagementView.class, Constants.ADD))));

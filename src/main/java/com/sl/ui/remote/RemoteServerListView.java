@@ -523,7 +523,7 @@ public class RemoteServerListView extends ViewBase {
     /** 「新建分组」弹窗：输入分组名，重名 / 默认分组名 / 超长都拦在保存前。 */
     private class NewGroupDialog extends Dialog {
 
-        private final TextField nameField = UiFactory.textField("分组名称", "如：生产环境", "500px");
+        private final TextField nameField = UiFactory.textField("分组名称", "如：生产环境", "400px");
 
         NewGroupDialog() {
             setHeaderTitle("新建分组");
