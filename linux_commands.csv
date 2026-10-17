@@ -1,0 +1,557 @@
+cmd_name,cmd_category,cmd_summary,cmd_params,cmd_examples,cmd_remark
+ls,文件与目录,列出目录内容，最常用的命令没有之一。,"-l  长格式（权限/属主/大小/时间）
+-a  含隐藏文件（.开头）
+-h  人性化大小（配合 -l）
+-t  按修改时间排序
+-r  逆序
+-S  按大小排序
+-d  只看目录本身，不展开","ls -lh => 长格式人性化查看当前目录
+ls -lat => 最近改动的文件排最前
+ls -ld /data => 只看 /data 目录本身的属性",
+cd,文件与目录,切换工作目录（shell 内建命令）。,"..  上一级
+~ 或不带参数  回当前用户家目录
+-  回上一次所在的目录","cd /var/log => 进入绝对路径
+cd .. => 退到上一级
+cd - => 在两个目录之间来回切换",
+pwd,文件与目录,显示当前所在目录的绝对路径。,"-P  物理路径（不跟随符号链接）
+-L  逻辑路径（默认，保留链接路径）","pwd => 看当前在哪
+pwd -P => 穿过软链接看真实路径",
+mkdir,文件与目录,创建目录。,"-p  递归创建多级（父目录不存在一并建出）
+-m  创建的同时设权限
+-v  显示创建过程","mkdir -p /data/app/logs => 一次建出整条目录链
+mkdir -m 750 /data/secret => 建目录并设权限",
+rmdir,文件与目录,删除**空目录**（有内容删不掉，比 rm -r 安全）。,-p  沿父目录链向上删，只要都是空的,rmdir /data/tmp => 只能删空目录,
+cp,文件与目录,复制文件或目录。,"-r  递归复制（拷目录必备）
+-p  保留权限/属主/时间戳
+-a  归档模式（-r -p 再加链接处理，备份首选）
+-i  覆盖前询问
+-u  只拷贝比目标新的文件","cp -a /data/app /backup/ => 完整保留属性地备份目录
+cp /etc/hosts /etc/hosts.bak => 改配置前先备份",
+mv,文件与目录,移动文件/目录，或原地重命名（同一分区是改名，跨分区是拷贝+删除）。,"-i  覆盖前询问
+-f  强制覆盖
+-n  不覆盖已存在","mv app.jar app.jar.bak => 原地重命名
+mv /tmp/app.jar /opt/app/ => 移动到目标目录",
+rm,文件与目录,删除文件或目录。删除不进回收站、不可恢复。,"-r  递归删除（删目录必备）
+-f  不询问
+-i  每个都询问","rm -f app.log => 删单个文件
+rm -rf /data/app/tmp => 删整个目录树",rm -rf 敲错路径就是事故，执行前先 pwd 确认当前目录；能用 mv 到 /tmp 的就别 rm。
+touch,文件与目录,创建空文件，或把已有文件的时间戳刷新为当前时间。,"-a  只改访问时间
+-m  只改修改时间
+-t  指定时间（[[CC]YY]MMDDhhmm[.ss]）",touch app.log => 文件不存在就建空的，存在就刷时间,
+ln,文件与目录,创建链接。运维里几乎只用软链接（-s）。,"-s  软链接（符号链接）
+-f  目标已存在则覆盖","ln -s /opt/app/app-1.2.jar /opt/app/app.jar => 发版切换版本的经典用法
+ln -sf /opt/app/app-1.3.jar /opt/app/app.jar => 升级只需重建链接",
+stat,文件与目录,看文件的完整元信息：大小、权限、属主、三种时间戳、inode。,-c  按格式只取部分信息（如 %a 取权限）,"stat app.jar => 全量元信息
+stat -c %Y app.jar => 只取修改时间戳（秒）",
+file,文件与目录,按文件内容（魔数）判断真实类型，不看扩展名。,-L  跟随符号链接,"file app.tar.gz => 报告是不是真的 gzip
+file /usr/bin/java => 报告是 ELF 还是脚本",
+tree,文件与目录,树状显示目录结构，比 ls 层次清晰。,"-L n  只展开 n 层
+-d  只显示目录","tree -L 2 /opt/app => 看两层结构
+tree -d /data => 只看目录骨架",Rocky 最小安装可能没有：dnf install tree
+readlink,文件与目录,读符号链接指向的路径。,-f  沿链接链一路解析到最终真实路径（必须存在）,readlink -f /opt/app/app.jar => 解析出版本号真实文件,
+basename,文件与目录,去掉路径，只取文件名部分。,后缀  顺带去掉指定后缀,"basename /var/log/app.log => app.log
+basename app-1.2.tar.gz .tar.gz => app-1.2",
+dirname,文件与目录,去掉文件名，只取目录部分。,,dirname /var/log/app.log => /var/log,
+find,搜索与定位,按名字/大小/时间/权限在目录树里实时找文件，找到还能 -exec 执行动作。,"-name  按文件名匹配（通配符记得加引号）
+-size  按大小（+100M = 大于 100MB）
+-mtime n  n 天前修改过（+7 = 7 天以前）
+-type f / d  只找文件 / 目录
+-user  按属主
+-perm  按权限
+-exec cmd {} \;  对每个找到的文件执行 cmd
+-delete  直接删除","find /var/log -name '*.log' => 找所有 .log 文件
+find / -size +500M -type f 2>/dev/null => 全盘找大文件
+find /data -mtime +7 -name '*.tmp' -delete => 删 7 天前的临时文件
+find /data -name '*.log' -exec gzip {} \; => 逐个压缩",
+which,搜索与定位,查命令的可执行文件在 PATH 里的位置（脚本里判断命令是否存在）。,,"which java => /usr/bin/java
+which -a python3 => 列出 PATH 里所有同名可执行",
+whereis,搜索与定位,查命令的二进制、源码、man 手册位置。,"-b  只找二进制
+-m  只找手册",whereis nginx => 二进制和手册位置一起给,
+locate,搜索与定位,按名字查 mlocate 索引库，比 find 快几个量级（代价是索引有延迟）。,"-i  忽略大小写
+-c  只输出数量",locate nginx.conf => 秒出结果,查不到新建文件是索引没更新，先跑 updatedb（Rocky 8 默认可能未装：dnf install mlocate）。
+grep,文本处理,按关键字/正则过滤文本行，查日志最常用，常配合管道使用。,"-i  忽略大小写
+-n  显示行号
+-r  递归搜目录
+-c  只统计匹配行数
+-v  反选（排除匹配行）
+-A n / -B n  显示匹配行后/前 n 行
+-E  扩展正则（等价 egrep）
+-o  只输出匹配到的部分","grep -n 'ERROR' app.log => 找出含 ERROR 的行并显示行号
+grep -c 'ERROR' app.log => 统计 ERROR 出现的行数
+tail -f app.log | grep --color 'Timeout' => 实时滚动日志里高亮看 Timeout
+grep -rn 'listen 80' /etc/nginx => 递归定位配置来源",
+xargs,文本处理,把标准输入变成命令参数，配合管道做批量操作。,"-n k  每次最多传 k 个参数
+-I {}  用 {} 做占位符
+-0  以 NUL 分隔（配合 find -print0，防文件名带空格）
+-r  输入为空就不执行","find /data -name '*.log' | xargs rm -f => 批量删除找到的文件
+cat urls.txt | xargs -n1 -I{} curl -sO {} => 逐行下载
+ls *.log | xargs gzip => 批量压缩",
+cat,文本处理,输出整个文件内容（小文件看内容/合并文件用）。,"-n  带行号
+-A  显示不可见字符（^I 是制表符，$ 是行尾）","cat /etc/hosts => 直接输出
+cat a.txt b.txt > c.txt => 合并文件",
+head,文本处理,看文件开头几行。,"-n k  前 k 行
+-c k  前 k 字节","head -n 20 app.log => 看前 20 行
+cat app.log | head -5 => 管道里截前 5 行",
+tail,文本处理,看文件末尾。加 -f 变成追着滚动看，是盯日志的标准姿势。,"-n k  看末尾 k 行
+-f  持续跟踪新写入
+-F  同 -f，且文件被轮换（改名重建）后自动跟上新文件","tail -f app.log => 实时滚动看日志
+tail -n 200 app.log => 看最后 200 行
+tail -F app.log | grep --color ERROR => 滚动日志里只看 ERROR",日志会 logrotate 轮换的场景用 -F，-f 会跟丢。
+less,文本处理,分页查看大文件（不整个加载进内存，看大日志首选）。,"-N  显示行号
+-S  长行不折行（左右方向键移）
++F  启动即进入跟踪模式（等效 tail -f）","less +F app.log => 先从头看，随时 Ctrl+C 回到浏览
+grep ERROR app.log | less => 搜索结果分页看",交互键：空格翻页、G 跳到末尾、/关键字 搜索、n 下一个、q 退出。
+more,文本处理,简易分页查看，功能不如 less（不能往回翻），脚本兼容老习惯时用。,,more app.log,
+wc,文本处理,统计行数/词数/字节数。,"-l  行数
+-w  词数
+-c  字节数","wc -l app.log => 日志多少行
+ls | wc -l => 目录下多少项
+grep ERROR app.log | wc -l => ERROR 有多少行",
+sort,文本处理,排序。,"-n  按数值排（默认按字典序，10 会排在 9 前面）
+-r  逆序
+-k n  按第 n 列
+-u  排序同时去重
+-h  按人性化数值排（2K/3M/1G）
+-t x  指定分隔符","du -sh * | sort -rh => 当前目录各项按大小排
+sort -t: -k3 -n /etc/passwd => 按第 3 列（uid）数值排",
+uniq,文本处理,对**相邻**重复行去重/计数，一般先 sort 再 uniq。,"-c  每行前面标出现次数
+-d  只输出重复过的行
+-u  只输出没重复的行","sort access.log | uniq -c | sort -rn => 访问 IP 出现次数排行
+awk '{print $1}' access.log | sort | uniq -c | sort -rn | head => 访问量 Top10",
+cut,文本处理,按分隔符取列，或按字符位置取段。,"-d x  指定分隔符
+-f n  取第 n 列
+-c a-b  取第 a 到 b 字符","cut -d: -f1 /etc/passwd => 取用户名列
+cut -d. -f1-3 <<< '192.168.1.100' => 取前三段",
+tr,文本处理,字符级替换/删除/压缩（只走管道，不接文件名）。,"-d  删除指定字符
+-s  连续重复字符压成一个","cat file | tr a-z A-Z => 转大写
+cat file | tr -d '\r' => 去掉 Windows 回车符
+cat file | tr -s ' ' => 连续空格压成一个",
+diff,文本处理,逐行比较两个文件的差异。,"-u  统一格式（补丁风格，最常用）
+-y  并排对照
+-r  递归比较目录
+-i  忽略大小写","diff -u old.conf new.conf => 看配置改了哪几行
+diff -r dirA dirB => 比较两个目录",
+awk,文本处理,按列处理文本的编程语言。取 ps/netstat 输出的某一列、做合计统计都靠它。,"-F x  指定分隔符
+{print $n}  打印第 n 列（$0 整行，$NF 最后一列）
+NR>1  跳过表头行","awk '{print $1}' access.log => 取第一列（客户端 IP）
+ps aux | awk 'NR>1 {s+=$6} END {print s}' => 汇总所有进程内存（KB）
+awk -F: '{print $1}' /etc/passwd => 按冒号切列，取用户名",
+sed,文本处理,流编辑器，批量替换/删除文本行，改配置文件最常用的非交互手段。,"s/old/new/g  替换（g 全行替换）
+-i  直接改文件（不加则只打印结果）
+-n 'xp'  只打印第 x 行
+/^xx/d  删除匹配行","sed -i 's/8080/9090/' application.properties => 把文件里的 8080 改成 9090
+sed -n '100,120p' app.log => 只看 100 到 120 行
+sed -i '/^$/d' notes.txt => 删除空行",-i 直接改文件没有撤销，改之前先 cp 一份。
+vim,文本处理,终端编辑器（vi 的增强版，Rocky 8 默认 vi 是 vim-minimal）。,,vim /etc/hosts => 编辑文件,普通模式：i 进插入、dd 删行、yy 复制行、p 粘贴、u 撤销、/关键字 搜索；末行：:w 保存、:q 退出、:q! 强退、:wq 保存退出。
+echo,文本处理,输出文本/变量值，也用来往文件追加内容。,"-e  解析 \n \t 转义
+-n  不输出换行","echo $JAVA_HOME => 打印变量
+echo 'vm.swappiness=10' >> /etc/sysctl.conf => 追加一行配置
+echo -n > app.log => 清空文件",
+printf,文本处理,格式化输出（贴近 C 的 printf），脚本里对齐输出用，比 echo 可控。,,printf '%-20s %s\n' 'HOST' 'STATUS' => 左对齐 20 宽输出表头,
+chmod,权限与属主,改文件/目录的读写执行权限。数字 755 = rwxr-xr-x，目录必须有 x 才能进入。,"-R  递归（对目录）
+数字含义  4=r 2=w 1=x，三位分别对应属主/组/其他人
+u/g/o/a  属主/组/其他人/所有 +/=/-","chmod +x deploy.sh => 给脚本加执行权限
+chmod -R 755 /opt/app => 目录及内部全部 rwxr-xr-x
+chmod 600 id_rsa => 私钥只给自己读写（ssh 强制要求）",
+chown,权限与属主,改文件/目录的属主与属组，web 目录权限问题的另一半。,"-R  递归
+user:group  同时改属主和属组；只写 user 则只改属主","chown -R nginx:nginx /usr/share/nginx/html => 网站目录交给 nginx 用户
+chown appuser /data/app/app.log => 只改属主",
+chgrp,权限与属主,只改属组（chown 一次就能干的事，组脚本场景用）。,-R  递归,chgrp -R devops /data/shared,
+getfacl,权限与属主,查看文件的 ACL 扩展权限（chmod 三段位表达不了的细粒度授权）。,,getfacl /data/app => 看有没有额外授权,
+setfacl,权限与属主,设置 ACL：给『额外的人』单独授权，不动属主/组设置。,"-m  修改/添加
+-x  删除某条
+-R  递归
+-b  清空全部 ACL","setfacl -m u:deploy:rx /data/app => 给 deploy 单独读执行权
+setfacl -m g:devops:rwx /data/shared => 给整组授权
+setfacl -b /data/app => 清掉所有 ACL",
+umask,权限与属主,设置新建文件/目录的默认权限掩码（shell 内建，常写进 /etc/profile）。,,"umask => 显示当前掩码（常为 0022）
+umask 027 => 新文件 640、新目录 750",
+su,权限与属主,切换用户身份。,"-  连环境变量一起切换（登录式，推荐）
+-c cmd  以目标用户身份执行一条命令","su - deploy => 完整切到 deploy
+su - root -c 'systemctl restart nginx' => 临时借 root 身份执行一条",
+sudo,权限与属主,以授权身份执行命令（有审计记录，生产推荐替代 su）。,"-l  看自己被授权了什么
+-i  登录式进入目标（默认 root）shell
+-u user  指定以谁的身份","sudo systemctl restart nginx => 以 root 执行
+sudo -l => 我能干什么
+sudo -u appuser whoami => 以普通用户身份验证",
+useradd,用户与组,创建用户。,"-m  创建家目录
+-s  指定登录 shell
+-g  主组
+-G  附加组（逗号分隔）
+-d  指定家目录路径","useradd -m -s /bin/bash deploy => 建带家目录的普通用户
+useradd -m -G wheel -s /sbin/nologin svcapp => 建服务账号（不给登录 shell）",
+usermod,用户与组,修改用户属性。,"-aG  附加组（**追加**，不带 -a 会覆盖！）
+-L / -U  锁定 / 解锁账号
+-s  改 shell
+-d  改家目录（-m 连数据一起搬）","usermod -aG wheel deploy => 授予 sudo（Rocky 的 wheel 组）
+usermod -s /sbin/nologin svcapp => 禁止交互登录
+usermod -L deploy => 锁定账号",-G 不带 -a 是全量覆盖附加组，给账号加组永远用 -aG。
+userdel,用户与组,删除用户。,-r  连家目录和邮箱一起删,userdel -r deploy,
+groupadd,用户与组,创建用户组。,-g  指定 gid,groupadd devops,
+groupdel,用户与组,删除用户组（组内还有用户时也能删，但那些用户会失去该组）。,,groupdel devops,
+passwd,用户与组,改密码 / 查账号密码状态。,"-S  看状态
+-l / -u  锁定 / 解锁
+--stdin  从管道读密码（Rocky 专用，非交互改密）","passwd deploy => 交互改密
+echo 'NewPass@123' | passwd --stdin deploy => 脚本里非交互改密
+passwd -S deploy => 看是否被锁定",
+id,用户与组,显示用户的 uid、gid 和所属组。,,"id => 看自己
+id deploy => 看别人在哪些组（验证加组是否生效）",
+who,用户与组,看谁登录在系统上。,-b  上次开机时间,who => 在线用户列表,
+w,用户与组,看在线用户及他们正在跑什么（who 的加强版），第一行还有负载。,,w => 一屏看全：负载 + 在线用户 + 正在执行的命令,
+last,用户与组,历史登录记录（读 /var/log/wtmp）。,"-n k  最近 k 条
+-x  含关机/重启记录","last | head -20 => 最近登录
+lastb => 失败的登录尝试（爆破排查）",
+chage,用户与组,管理密码有效期。,"-l  查看策略
+-M n  最长使用天数
+-d 0  下次登录强制改密
+-E 日期  设置账号过期日","chage -l deploy => 看密码策略
+chage -d 0 deploy => 首次登录强制改密码",
+ps,进程与任务,快照式列出进程。排查进程在不在、启动参数是什么用 ps，动态看占用用 top。,"-ef  全格式列出所有进程（SysV 风格）
+aux  BSD 风格，含 CPU/内存占用
+--sort=-%mem  按内存降序
+--sort=-%cpu  按 CPU 降序","ps -ef | grep java => 找 java 进程及启动参数
+ps aux --sort=-%mem | head -10 => 内存占用最高的前 10 个进程",grep 过滤时总会多出一行 grep 自己，加 | grep -v grep 排除。
+top,进程与任务,实时动态看 CPU/内存占用与进程排行。,"-d n  刷新间隔秒数
+-p pid  只盯指定进程
+-b  批处理模式（输出给脚本）
+-n k  批处理模式刷新 k 次后退出","top => 交互式看整体负载（默认 3 秒刷新）
+top -p 1234 => 只看 PID 1234
+top -b -n 1 > top.txt => 输出一次快照",交互键：P 按 CPU 排、M 按内存排、1 展开每颗 CPU、q 退出。
+kill,进程与任务,按 PID 向进程发信号。,"-15  优雅终止（SIGTERM，默认）
+-9  强杀（SIGKILL，进程无法拦截）
+-1  重载（SIGHUP，多数服务当 reload 用）
+-l  列出所有信号","kill 1234 => 优雅终止
+kill -9 1234 => 杀不掉再强杀",先 -15 给进程收尾落盘的机会，实在杀不掉再 -9。
+pkill,进程与任务,按名字/模式/用户杀进程（不用先查 PID）。,"-f  匹配完整命令行（不只是进程名）
+-u user  只杀某用户的
+-9  强杀","pkill -f app.jar => 杀掉命令行含 app.jar 的进程
+pkill -u deploy => 杀该用户所有进程",pkill -f 模式太宽会误杀（比如匹配到自己的 grep），执行前先 pgrep -f 确认。
+killall,进程与任务,按**确切**进程名杀进程（不是模式匹配）。,"-u user  限定用户
+-9  强杀",killall java,
+pgrep,进程与任务,按名字/模式查 PID（pkill 的只读版，先看后杀）。,"-l  同时输出进程名
+-f  匹配完整命令行
+-u user  限定用户","pgrep -f app.jar => 拿到 PID
+pgrep -l java => 列出所有 java 进程",
+nohup,进程与任务,让命令在退出会话后继续运行，输出默认追加到 nohup.out。,,nohup java -jar app.jar > app.out 2>&1 & => 后台常驻并把输出重定向,更规范的做法是做成 systemd 服务；nohup 适合临时验证。
+jobs,进程与任务,查看当前会话的后台任务（shell 内建）。,-l  带 PID,"jobs => 会话里的后台任务
+fg %1 => 调回前台
+bg %1 => 让暂停的任务在后台继续
+Ctrl+Z => 暂停当前前台任务",
+nice,进程与任务,以指定调度优先级启动进程（值越大优先级越低）。,-n  偏移量（-20~19）,nice -n 10 gzip big.log => 低优先级跑压缩，不抢业务 CPU,
+renice,进程与任务,改**运行中**进程的优先级。,"-n  新的 nice 值
+-p  进程 PID
+-u  按用户",renice -n 5 -p 1234 => 降低 PID 1234 优先级,
+timeout,进程与任务,限时执行命令，超时自动终止——防止脚本里的命令挂死。,"秒数  时限
+-k k  超时后 k 秒强制杀
+-s  指定信号","timeout 60 curl -sO big.zip => 60 秒没下完就放弃
+timeout -k 5 30 ssh host 'reboot' => 30 秒超时再给 5 秒强杀",
+uname,系统信息,显示内核与系统信息。,"-a  全部信息
+-r  内核版本","uname -r => 4.18.0-...（Rocky 8.6 的内核版本号）
+uname -a => 一条看全",
+hostname,系统信息,显示或临时设置主机名（永久改用 hostnamectl）。,,"hostname => 显示主机名
+hostname app-node-01 => 临时改（重启丢失）",
+hostnamectl,系统信息,systemd 的主机名/系统信息管理（永久生效）。,"set-hostname  永久改主机名
+status  看系统概要","hostnamectl set-hostname app-node-01 => 永久改名
+hostnamectl status => 系统信息概览",
+uptime,系统信息,开机时长 + 1/5/15 分钟负载 + 在线用户数。,,"uptime => 14:02:31 up 35 days, load average: 0.10, 0.08, 0.05",负载经验值：持续接近或超过 CPU 核数就要查（核数看 lscpu）。
+date,系统信息,显示/设置系统时间。,"+格式  自定义输出（%F 日期 %T 时间）
+-d  解析相对/指定时间
+-s  设置时间","date '+%F %T' => 2026-10-17 14:00:00
+date -d '-1 day' '+%F' => 昨天日期（日志分目录常用）",
+timedatectl,系统信息,systemd 的时区与时间同步管理。,"status  看时区/NTP 状态
+set-timezone  改时区
+set-ntp  开关时间同步","timedatectl status => 看时区和 NTP 同步状态
+timedatectl set-timezone Asia/Shanghai => 改时区",
+dmesg,系统信息,看内核环形缓冲：硬件报错、OOM 杀进程、磁盘超时都先在这里留痕。,"-T  人类可读时间戳
+-C  清空缓冲
+-w  持续跟踪","dmesg -T | grep -i oom => 查有没有进程被 OOM 杀掉
+dmesg -T | tail -50 => 最近内核消息",
+lscpu,系统信息,CPU 架构信息：核数、主频、架构。,,"lscpu => 看 CPU(s) 和 Core per Socket
+lscpu | grep '^CPU(s)' => 只取逻辑核数",
+env,系统信息,打印全部环境变量（shell 内建）。,,"env | sort => 看全量
+echo $PATH => 单看某个",
+export,系统信息,设置/导出环境变量（shell 内建，只对当前会话及子进程生效）。,,"export APP_ENV=prod => 导出变量
+export PATH=$PATH:/opt/app/bin => 追加 PATH",
+alias,系统信息,定义/查看命令别名（shell 内建）。,,"alias => 看现有别名
+alias ll='ls -l --color=auto' => 定义别名
+unalias ll => 删除别名",
+history,系统信息,查看当前用户执行过的命令。每条前面带序号，!序号 可以直接重跑。,"n  只显示最近 n 条
+-c  清空历史","history | grep systemctl => 找之前敲过的命令
+history 20 => 最近 20 条
+!1024 => 重跑第 1024 条",
+man,系统信息,命令手册（遇到没见过的参数先问 man）。,章节  按章节查（1 命令 5 配置文件格式 8 管理命令）,"man ls => 命令手册
+man 5 crontab => crontab 文件格式
+man -k 端口 => 按关键词搜手册",
+df,磁盘与文件系统,看文件系统整体磁盘占用。磁盘报警第一反应就是 df -h。,"-h  人性化单位
+-i  看 inode 用量
+-T  显示文件系统类型
+-x tmpfs  排除某种文件系统","df -h => 各挂载点使用率
+df -i => inode 使用率",磁盘没满但写不进文件？df -i 看 inode 是不是用光了。
+du,磁盘与文件系统,统计目录/文件实际占用，找出谁把磁盘吃满就靠它。,"-h  人性化单位
+-s  只给总计
+--max-depth=1  只展开一层子目录
+-a  含文件","du -sh /data => /data 一共多大
+du -h --max-depth=1 /var | sort -rh | head => /var 下最大的子目录",du 是扫文件现统计，正在写的大文件和挂载点会让 du 与 df 对不上，属正常。
+lsblk,磁盘与文件系统,树状列出块设备：盘、分区、大小、挂载点一眼看清。,-f  带文件系统类型和 UUID,"lsblk => 整机磁盘结构
+lsblk -f => 加文件系统信息（新挂盘先看这个）",
+fdisk,磁盘与文件系统,MBR 分区管理（交互式）。,-l  只看分区表，不进交互,"fdisk -l /dev/sdb => 看这块盘的分区
+fdisk /dev/sdb => 交互分区（m 帮助，n 新建，d 删除，w 写入）",
+parted,磁盘与文件系统,GPT 分区管理（2TB 以上大盘用它，fdisk 不支持 GPT）。,-l  列出所有盘的分区,"parted /dev/sdb mklabel gpt => 建 GPT 分区表
+parted /dev/sdb mkpart primary xfs 0% 100% => 整盘一个分区",
+mkfs.xfs,磁盘与文件系统,格式化为 XFS（Rocky 8 默认文件系统）。,-f  强制格式化已含文件系统的盘,mkfs.xfs /dev/sdb1 => 格式化分区,格式化=清空数据，执行前 lsblk 确认盘符，敲错就是灾难。
+mkfs.ext4,磁盘与文件系统,格式化为 ext4。,,mkfs.ext4 /dev/sdc1,
+blkid,磁盘与文件系统,显示分区的 UUID 与文件系统类型（写 /etc/fstab 用 UUID 最稳）。,,blkid /dev/sdb1 => 拿 UUID 写 fstab,
+mount,磁盘与文件系统,挂载文件系统。,"-a  挂载 /etc/fstab 里全部未挂载项
+-o ro  只读挂载
+-t 类型  指定文件系统","mount /dev/sdb1 /data => 临时挂载
+mount -a => fstab 改完先验证（有错会报出来，不会拖垮开机）",
+umount,磁盘与文件系统,卸载已挂载的文件系统。,"-l  懒卸载（等占用释放）
+-f  强制（NFS 场景）",umount /data => 卸载,报 target is busy 就用 lsof /data 或 fuser -vm /data 找占用进程。
+xfs_repair,磁盘与文件系统,修复 XFS 文件系统（卸载状态下执行）。,"-n  只检查不修
+-L  强制清日志（最后手段）","xfs_repair -n /dev/sdb1 => 只检查
+xfs_repair /dev/sdb1 => 修复",-L 会丢未落盘数据，机器有重要数据时先试不带 -L。
+sync,磁盘与文件系统,把内存里的脏页缓存强制写盘（掉电前/拔盘前跑一下）。,,sync,
+swapon,磁盘与文件系统,启用/查看交换分区或交换文件。,"-s  查看当前 swap
+-a  启用 fstab 里全部","swapon -s => 看 swap 在哪、多大
+fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile => 内存小的机器加 swap 文件",
+dd,磁盘与文件系统,块级复制/转换：造测试文件、备份引导扇区、烧写镜像。,"if=  输入
+of=  输出
+bs=  块大小
+count=  块数","dd if=/dev/zero of=test.img bs=1M count=100 => 造 100MB 测试文件
+dd if=Rocky-8.6.iso of=/dev/sdb => 写 U 盘启动盘",if/of 敲反直接覆盖目标盘，执行前再三确认两个参数。
+ip,网络,iproute2 全家桶：看/配网卡、地址、路由（替代老 ifconfig/route）。,"addr  地址（ip a）
+link  网卡状态
+route  路由表
+neigh  ARP 表","ip a => 看所有网卡和 IP
+ip route => 路由表和默认网关
+ip link set eth0 up => 启用网卡
+ip a show eth0 => 只看某块网卡",
+ping,网络,测试网络连通性（ICMP）。,"-c k  发 k 个包就停
+-i n  间隔秒
+-W n  超时秒","ping -c 4 192.168.80.1 => 测网关通不通
+ping -c 4 api.example.com => 同时验证 DNS",
+ss,网络,看监听端口与连接状态（netstat 的现代替代，Rocky 8 自带）。,"-t  tcp
+-u  udp
+-l  只看监听（LISTEN）
+-n  不做域名/服务名反解（快）
+-p  显示占用端口的进程（需 root）
+-s  协议统计汇总","ss -tlnp => 本机监听了哪些 TCP 端口、被谁监听
+ss -tnp | grep 6379 => 谁连着 6379
+ss -s => 连接总数汇总",
+netstat,网络,老牌网络连接查看工具（net-tools 包，Rocky 8 默认不装）。,"-tlnp  tcp+监听+数字+进程
+-rn  路由表","netstat -tlnp => 同 ss -tlnp
+netstat -rn => 看默认网关",Rocky 8 上没有就 dnf install net-tools，或直接用 ss。
+traceroute,网络,追踪到目标经过的每一跳路由。,"-n  不做反解（快）
+-I  用 ICMP（默认 UDP，部分网关不回）",traceroute -n 8.8.8.8,
+mtr,网络,ping + traceroute 合体，实时看每一跳的丢包/延迟，排查丢包在哪一跳。,"-n  不反解
+-r  报告模式（跑固定次数出报表）
+-c k  报告模式发包数",mtr -rn 8.8.8.8 => 出一份 10 包的路径质量报表,Rocky 最小安装可能没有：dnf install mtr。
+dig,网络,DNS 查询（bind-utils 包），排查解析问题首选。,"+short  只出结果
+@server  指定 DNS 服务器
+-x  反查 PTR","dig +short api.example.com => 直接拿解析结果
+dig @192.168.80.1 api.example.com => 问指定 DNS（排查内网解析）",
+nslookup,网络,DNS 查询（简单交互版）。,,nslookup api.example.com,
+host,网络,DNS 查询的精简版，输出干净。,,"host api.example.com
+host -t mx example.com => 查 MX 记录",
+curl,网络,命令行 HTTP 客户端。测接口连通性、带 header 调试、下载文件都用它。,"-X  指定方法（GET/POST/...）
+-H  加请求头
+-d  请求体（加了默认变 POST）
+-I  只看响应头
+-o / -O  输出到文件
+-k  忽略证书校验
+-v  显示详细过程","curl -I http://127.0.0.1:8080/actuator/health => 只看健康检查的状态码
+curl -d 'a=1&b=2' http://127.0.0.1:8080/api => POST 一段表单数据
+curl -o app.jar http://repo.local/app.jar => 下载文件
+curl -vk https://127.0.0.1:8443/ => 自签证书接口调试",内网不通时先 curl -v 看卡在哪一步（DNS/连接/TLS/响应）。
+wget,网络,下载文件（支持递归镜像、断点续传）。,"-O  指定输出文件名
+-c  断点续传
+-q  安静模式
+--limit-rate  限速","wget -c http://repo.local/big.tar.gz => 断点续传下载
+wget -O /opt/app/app.jar http://repo.local/app.jar",
+rsync,网络,远程/本地同步，只传差异部分，大目录同步与备份神器。,"-a  归档（递归+保属性）
+-v  详细
+-z  压缩传输
+--delete  目标里删掉源没有的（镜像同步）
+-P  进度+断点续传
+--exclude  排除模式","rsync -avz /data/app/ root@192.168.80.160:/data/app/ => 增量同步到远端
+rsync -avz --delete /data/app/ /backup/app/ => 本地镜像备份",结尾斜杠有讲究：/data/app/ 是里面的内容，/data/app 是目录本身，弄反会多套一层。
+ssh,网络,远程登录/远程执行命令（运维的命根子）。,"-p  指定端口
+-i  指定私钥文件
+-L  本地端口转发
+-v  调试模式","ssh root@192.168.80.160 => 登录
+ssh root@192.168.80.160 'df -h' => 远程执行一条命令拿结果
+ssh -p 2222 deploy@host => 非标准端口
+ssh -L 8080:127.0.0.1:8080 root@host => 隧道，本地 8080 直通远端服务",
+ssh-keygen,网络,生成/管理 SSH 密钥对（配免密登录第一步）。,"-t  算法（推荐 ed25519 或 rsa）
+-b  位长
+-C  备注","ssh-keygen -t ed25519 => 生成密钥对
+ssh-copy-id deploy@192.168.80.160 => 把公钥推到远端，实现免密",
+tcpdump,网络,命令行抓包，接口不通、协议对不上时的最终手段。,"-i  网卡（any 全部）
+-nn  不做域名/端口反解
+port / host / src / dst  过滤表达式
+-w  写 pcap 文件
+-c k  抓 k 个包","tcpdump -i any -nn port 6379 => 看谁在访问 redis
+tcpdump -i eth0 -nn host 192.168.80.160 -w dump.pcap => 抓包存文件",需要 root；pcap 文件拷回来用 Wireshark 看更舒服。
+nc,网络,网络瑞士军刀：测端口通断、临时监听、发原始数据（Rocky 8 是 ncat）。,"-z  只探测不收发
+-v  显示过程
+-l  监听模式
+-u  UDP","nc -zv 192.168.80.160 22 => 测端口通不通
+nc -l 9999 => 临时监听 9999 收数据",
+nmcli,网络,NetworkManager 命令行（Rocky 8 网卡配置的正路）。,"con show  连接列表
+con mod  改配置
+dev status  设备状态","nmcli dev status => 网卡状态
+nmcli con show => 网络配置列表
+nmcli con mod eth0 ipv4.dns '192.168.80.1' && nmcli con up eth0 => 改 DNS 并生效",
+firewall-cmd,网络,firewalld 防火墙管理（Rocky 8 默认防火墙）。,"--list-all  看当前区域全部规则
+--add-port / --remove-port  开/关端口
+--permanent  写永久配置
+--reload  重载（让 permanent 生效）","firewall-cmd --list-all => 看放行了什么
+firewall-cmd --permanent --add-port=8080/tcp && firewall-cmd --reload => 永久放行 8080
+firewall-cmd --permanent --add-service=https && firewall-cmd --reload",不加 --permanent 只对本次运行生效，重载即丢；加了 --permanent 必须 --reload 才生效。
+telnet,网络,明文远程登录协议客户端，现在主要拿来测端口通不通。,,telnet 192.168.80.160 22 => 能连上说明端口通（Ctrl+] 再 quit 退出）,Rocky 8 默认未装：dnf install telnet；只是测端口的话 nc -zv 更顺手。
+systemctl,服务与日志,systemd 的服务管理入口：启停、开机自启、看状态。,"status / start / stop / restart  常规动作
+enable / disable  设/取消开机自启
+enable --now  自启并立即启动
+list-units  列出单元
+list-unit-files  列出已安装服务
+daemon-reload  重载 unit 文件（改了 .service 后必跑）","systemctl status nginx => 看状态和最近几条日志
+systemctl enable --now docker => 设开机自启并立即启动
+systemctl list-units --type=service --state=running => 正在运行的服务
+systemctl daemon-reload => 改完 service 文件后刷新",restart 会断开重拉；只是改了配置想热加载，优先 reload。
+journalctl,服务与日志,看 systemd 服务的日志（status 里那几行不够看时用它）。,"-u unit  只看某个服务
+-f  持续跟踪
+--since / --until  按时间过滤
+-n k  最近 k 行
+-p err  只看错误级","journalctl -u nginx -f => 持续跟踪 nginx 日志
+journalctl -u app --since '2026-10-17 08:00' => 看某服务 8 点以来的日志
+journalctl -p err --since today => 今天所有的错误级日志",
+crontab,服务与日志,管理用户的定时任务。时间格式：分 时 日 月 周 命令。,"-l  列出当前任务
+-e  编辑（保存即生效）
+-r  删除全部（危险！）","crontab -l => 看当前用户的定时任务
+crontab -e => 编辑；加一行 0 2 * * * /opt/backup.sh 即每天凌晨 2 点执行",编辑保存即生效不用重启服务；排查没执行先看 /var/log/cron；-r 一按就清空，慎用。
+service,服务与日志,SysV 时代的服务命令，Rocky 8 上是 systemctl 的兼容壳。,,service nginx status => 转发给 systemctl status nginx,新系统一律直接写 systemctl。
+chkconfig,服务与日志,SysV 时代的开机自启管理，同样是 systemctl 的兼容壳。,--list  列出服务自启状态,chkconfig --list | grep 3:on,新系统一律 systemctl enable/disable。
+at,服务与日志,一次性定时任务（到点跑一次就完，区别于 crontab 的周期任务）。,,"echo '/opt/cleanup.sh' | at 23:00 => 今晚 23:00 执行一次
+atq => 看待执行队列
+atrm 3 => 删除 3 号任务",
+shutdown,服务与日志,关机/重启（可定时、可广播提示）。,"-h  关机
+-r  重启
+now / +m  立即 / m 分钟后
+c  取消","shutdown -r now => 立即重启
+shutdown -h +10 '10分钟后例行维护关机' => 定时关机并通知在线用户
+shutdown -c => 取消",
+reboot,服务与日志,立即重启（等于 shutdown -r now）。,,reboot,
+watch,服务与日志,周期性执行命令并全屏刷新结果（盯指标变化）。,"-n k  间隔秒
+-d  高亮变化的部分","watch -n 2 'df -h /data' => 每 2 秒刷一次磁盘
+watch -d 'ss -s' => 高亮连接数变化",
+dnf,软件包管理,Rocky 8 的包管理器（yum 是它的软链接，两者等价）。,"install / remove / update  装删改
+search  按名字搜
+provides  查某命令/文件属于哪个包
+list installed  已装列表
+info  包详情
+clean all  清缓存","dnf install nginx => 安装
+dnf provides '*/ss' => 查 ss 命令在哪个包（iproute）
+dnf list installed | grep java => 看装了哪些 java 相关包
+dnf update -y => 全量更新",
+yum,软件包管理,dnf 的兼容别名（Rocky 8 上 yum -> dnf），老习惯命令照常可用。,,yum install -y wget,
+rpm,软件包管理,查询/校验/安装本地 rpm 包（不解决依赖，装包优先 dnf）。,"-qa  所有已装包
+-ql 包  包里有哪些文件
+-qf 路径  某文件属于哪个包
+-ivh  安装本地包
+-e  卸载","rpm -qa | grep nginx
+rpm -qf /usr/bin/ss => ss 属于哪个包
+rpm -ql nginx | grep conf => nginx 的配置文件都在哪",
+yum history,软件包管理,查看 dnf/yum 的操作历史，支持回滚。,info / undo / redo,"yum history => 操作记录列表
+yum history info 12 => 第 12 次操作装了什么
+yum history undo 12 => 撤销第 12 次操作",
+vmstat,性能监控,内存/交换/IO/CPU 总览（procps-ng，自带）。,间隔 次数  每 n 秒采样共 k 次,vmstat 2 5 => 每 2 秒一行，共 5 行,重点看 si/so（换页）：持续非 0 说明物理内存不够，在疯狂换页。
+iostat,性能监控,CPU 与磁盘 IO 统计（sysstat 包）。,"-x  扩展指标（await/util 等关键列）
+间隔 次数  采样","iostat -x 2 3 => 每 2 秒采样，看 %util 和 await
+iostat -dx 1 => 只看磁盘扩展指标",
+sar,性能监控,系统活动历史报表（sysstat，能回看**过去**的性能，其他工具做不到）。,"-u  CPU
+-r  内存
+-n DEV  网卡流量
+-q  负载与队列
+-b  磁盘 IO","sar -u => 今天 CPU 使用率
+sar -n DEV 1 5 => 实时看网卡每秒流量
+sar -q -f /var/log/sa/sa17 => 看 17 号那天的负载",Rocky 8 需安装并启用 sysstat：dnf install sysstat && systemctl enable --now sysstat。
+mpstat,性能监控,每个 CPU 核的使用率（sysstat）。,"-P ALL  所有核
+间隔 次数",mpstat -P ALL 2 => 每 2 秒一屏各核占比（看是否单核打满）,
+pidstat,性能监控,按进程细看 CPU/内存/IO 占用（sysstat）。,"-u  CPU
+-r  内存
+-d  磁盘 IO
+间隔 次数","pidstat -u 2 5 => 每 2 秒输出各进程 CPU
+pidstat -d 2 => 谁在疯狂读写磁盘",
+free,性能监控,看内存与交换分区使用。重点看 available：真正还能分配给新程序的量。,"-h  人性化单位
+-m  以 MB 计
+-s n  每 n 秒刷新",free -h => 内存概览,buff/cache 是内核缓存不算被占用；别看 free 列吓自己，看 available。
+lsof,性能监控,列出进程打开的文件。Linux 下一切皆文件，端口占用、被删但仍被写的日志都能查。,"-i :port  查端口占用
+-p pid  查某进程打开的文件
+-u user  按用户
++d 目录  查目录下被打开的文件","lsof -i :8080 => 谁占着 8080
+lsof -p 1234 => PID 1234 打开了哪些文件
+lsof | grep deleted => 已删除但空间未释放的文件（磁盘满了先查这个）",
+tar,压缩与备份,打包/解包归档，常配合 gzip 压缩。只打包不压缩叫归档，加 -z 才走 gzip。,"-c  创建归档
+-x  解包
+-z  gzip（.tar.gz）
+-j  bzip2（.tar.bz2）
+-J  xz（.tar.xz）
+-v  显示过程
+-f  指定归档文件名（必须紧跟文件名）
+-C  解压到指定目录
+-t  只列出内容不解压
+--exclude  排除","tar -czvf backup.tar.gz /data/app => 打包压缩
+tar -xzvf backup.tar.gz => 解压到当前目录
+tar -xzvf backup.tar.gz -C /opt/app => 解压到指定目录
+tar -tzf backup.tar.gz => 看归档里有什么
+tar -czvf app.tar.gz --exclude='*.log' /data/app => 打包排除日志",-f 后面必须紧跟文件名，-czvf 这种连写顺序不能乱。
+gzip,压缩与备份,单文件压缩（压缩后原文件消失，变成 .gz）。,"-d  解压（= gunzip）
+-k  保留原文件
+-9  最大压缩比
+-1  最快","gzip app.log => 变成 app.log.gz
+gzip -k app.log => 压缩但保留原文件
+zcat app.log.gz => 不解压直接看内容",
+gunzip,压缩与备份,解压 gzip 文件（= gzip -d）。,-k  保留 .gz 文件,gunzip app.log.gz,
+zip,压缩与备份,打包压缩为 zip（与 Windows 互通性好）。,"-r  递归（目录必备）
+-e  加密码
+-x  排除","zip -r app.zip /data/app => 打包目录
+zip -r -e app.zip /data/app => 加密码",
+unzip,压缩与备份,解压 zip。,"-o  覆盖已有
+-d  解到指定目录
+-l  只看内容","unzip app.zip -d /opt/app => 解到指定目录
+unzip -l app.zip => 先看看里面有什么",
+xz,压缩与备份,更高压缩比的压缩工具（比 gzip 慢，归档长期保存用）。,"-d  解压
+-k  保留原文件
+-9  最大压缩","xz big.log => big.log.xz
+xz -d big.log.xz
+tar -cJf app.tar.xz /data/app => tar 直接配 xz",
+bzip2,压缩与备份,比 gzip 压得狠、比 xz 慢的中间档。,"-d  解压
+-k  保留原文件","bzip2 big.log
+tar -cjf app.tar.bz2 /data/app",
+scp,压缩与备份,基于 ssh 的远程复制，机器之间拷文件最省事的方式（配好密钥后无需密码）。,"-r  递归拷目录
+-P port  指定端口（大写 P，区别于 ssh 的小写 -p）
+-C  压缩传输","scp app.jar root@192.168.80.160:/opt/app/ => 本机推到远端
+scp root@192.168.80.160:/var/log/app.log ./ => 远端拉回本机
+scp -r dist root@192.168.80.160:/usr/share/nginx/ => 整个目录推上去",
+sha256sum,压缩与备份,计算 SHA256 校验和（验证文件完整性/发布包一致性）。,-c  按校验文件批量核对,"sha256sum app.jar => 算校验值
+sha256sum app.jar > app.jar.sha256 => 生成校验文件
+sha256sum -c app.jar.sha256 => 校验",
+md5sum,压缩与备份,计算 MD5 校验和（安全性弱于 SHA256，日常完整性校验够用）。,-c  按校验文件核对,md5sum app.jar,
+clear,其他常用,清屏（Ctrl+L 同效）。,,clear,
+base64,其他常用,Base64 编解码。,"-d  解码
+-w 0  不折行（默认 76 列折行，脚本里常关）","echo -n 'hello' | base64 => 编码
+echo 'aGVsbG8=' | base64 -d => 解码",
+iconv,其他常用,字符编码转换（GBK 老日志转 UTF-8 的标准姿势）。,"-f  源编码
+-t  目标编码",iconv -f gbk -t utf-8 old.log > new.log,
+time,其他常用,给命令计时（bash 内建），看 real/user/sys 三个耗时。,,"time java -version => 看启动耗时
+time tar -czf b.tgz /data => 压缩花了多久",
+sleep,其他常用,暂停指定秒数（脚本里做间隔）。,,"sleep 5 => 等 5 秒
+sleep 0.5 => 半秒（支持小数）",
+chattr,其他常用,改文件扩展属性（+i 锁定后 root 都不能改删，防误改配置）。,"+i / -i  加/去不可变位
++a  只许追加","chattr +i /etc/resolv.conf => 锁定文件防覆盖
+lsattr /etc/resolv.conf => 查看属性
+chattr -i /etc/resolv.conf => 解锁",
+lsattr,其他常用,查看文件的扩展属性（配合 chattr）。,,lsattr /etc/resolv.conf,
+systemd-analyze,其他常用,开机耗时分析。,"blame  按耗时排序列出各服务
+critical-chain  关键路径","systemd-analyze => 总开机耗时
+systemd-analyze blame => 谁拖慢了开机",
