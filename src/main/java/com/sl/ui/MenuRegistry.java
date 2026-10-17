@@ -14,6 +14,8 @@ import com.sl.ui.tool.Base64CodecView;
 import com.sl.ui.tool.CronGeneratorView;
 import com.sl.ui.tool.EncryptionView;
 import com.sl.ui.tool.FlowchartView;
+import com.sl.ui.tool.ImageCompressView;
+import com.sl.ui.tool.ImageConverterView;
 import com.sl.ui.tool.JsonBeautifyView;
 import com.sl.ui.tool.LinuxCmdQueryView;
 import com.sl.ui.tool.LinuxOpsView;
@@ -100,7 +102,9 @@ public final class MenuRegistry {
                     new Item("加密工具", EncryptionView.class, null),
                     new Item("二维码生成", QrCodeView.class, null),
                     new Item("正则表达式测试", RegexTestView.class, null),
-                    new Item("Cron表达式生成器", CronGeneratorView.class, null))),
+                    new Item("Cron表达式生成器", CronGeneratorView.class, null),
+                    new Item("图片压缩", ImageCompressView.class, null),
+                    new Item("图片转换", ImageConverterView.class, null))),
 
             new Group("用户管理", List.of(
                     new Item("用户管理", UserManagementView.class, Constants.ADD))));
