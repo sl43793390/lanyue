@@ -116,6 +116,23 @@ public class DbInitializer implements ApplicationRunner {
             new String[] {"id_file"});
 
     /**
+     * Linux 命令查询（Linux工具 → Linux命令查询）。
+     * 主键就是命令名（cmd_name），天然唯一，不另造 ID。
+     * 字段拆成 summary / params / examples 三块而不是一个大"说明"字段，
+     * 页面才能分别排版（一句话说明 / 等宽参数列表 / 可解析成「命令 => 说明」的示例列表）。
+     * cmd_examples 取 4000：一行一条示例，20 来条命令的量级绰绰有余。
+     */
+    private static final TableDef LINUX_CMD = new TableDef("linux_cmd",
+            new Object[][] {
+                    {"cmd_name", 64, true},
+                    {"cmd_category", 64, false},
+                    {"cmd_summary", 2000, true},
+                    {"cmd_params", 3000, false},
+                    {"cmd_examples", 4000, false},
+                    {"cmd_remark", 1000, false}},
+            new String[] {"cmd_name"});
+
+    /**
      * Docker-Compose 项目登记（Docker-Compose 管理）。
      * 平台上创建过的每个 compose 项目记一行：项目列表页的数据源就是这张表
      * （不再按根目录扫描），运行状态每次刷新时现查目标机。
@@ -208,7 +225,8 @@ public class DbInitializer implements ApplicationRunner {
                     new String[] {"id_host", "tomcat_id"}),
             SCRIPT_MGMT,
             DRAWIO_FILE,
-            COMPOSE_PROJECT};
+            COMPOSE_PROJECT,
+            LINUX_CMD};
 
     /** 一张表的建表定义：表名、列（{列名, 长度, 是否 NOT NULL}）、主键列。 */
     private static final class TableDef {

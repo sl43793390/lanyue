@@ -3,13 +3,15 @@
  *
  * 服务端对应 com.sl.ui.component.CodeEditor，两边只同步三个属性：
  * - value：编辑内容（客户端改动派发 value-changed 事件带回，detail.value 是全文）；
- * - mode：语法模式 plain / yaml / shell / nginx / properties；
+ * - mode：语法模式 plain / yaml / json / shell / nginx / properties；
  * - readOnly：只读开关。
  *
  * 包选型（都在 pom 侧用 @NpmPackage 声明）：
  * - codemirror 元包：basicSetup 自带行号 / 撤销历史 / 括号匹配 / 代码折叠，
  *   对「改配置、写命令」这类场景刚好，不引高级扩展保持轻量；
  * - @codemirror/lang-yaml：compose 文件的完整语法支持；
+ * - @codemirror/lang-json：JSON 的完整语法支持（Lezer 解析器，错误恢复能力强）；
+ * - @lezer/highlight：tags 常量，供 jsonHighlightStyle 按 token 类型配色；
  * - @codemirror/legacy-modes：nginx / shell / properties 的 StreamLanguage 移植模式。
  */
 import { LitElement, html, css, PropertyValues } from 'lit';
@@ -18,10 +20,31 @@ import { EditorView } from '@codemirror/view';
 import { EditorState, Compartment, Extension } from '@codemirror/state';
 import { basicSetup } from 'codemirror';
 import { yaml } from '@codemirror/lang-yaml';
-import { StreamLanguage } from '@codemirror/language';
+import { json } from '@codemirror/lang-json';
+import { syntaxHighlighting, HighlightStyle, StreamLanguage } from '@codemirror/language';
+import { tags as t } from '@lezer/highlight';
 import { nginx } from '@codemirror/legacy-modes/mode/nginx';
 import { shell } from '@codemirror/legacy-modes/mode/shell';
 import { properties } from '@codemirror/legacy-modes/mode/properties';
+
+/**
+ * JSON 专用配色：key（propertyName）与各类 value 分开上色。
+ *
+ * basicSetup 自带的 defaultHighlightStyle 里 propertyName 没有颜色——
+ * key 会和普通文本同色，JSON 的层级一眼看不出来；且默认的
+ * string=红 / number=绿 / bool=蓝 也不符合「key 蓝、字符串绿、数字橙、布尔紫」的阅读习惯。
+ *
+ * 只挂在 json 模式的 compartment 里（见 langExtension），
+ * yaml / shell / nginx / properties 仍走默认配色，不受影响。
+ */
+const jsonHighlightStyle = HighlightStyle.define([
+  { tag: t.propertyName, color: '#0550ae' },
+  { tag: t.string, color: '#0a7d33' },
+  { tag: t.number, color: '#b26a00' },
+  { tag: t.bool, color: '#a626a4' },
+  { tag: t.null, color: '#6f7787' },
+  { tag: t.invalid, color: '#d32f2f' },
+]);
 
 @customElement('code-editor')
 export class CodeEditorElement extends LitElement {
@@ -29,7 +52,7 @@ export class CodeEditorElement extends LitElement {
   /** 编辑内容全文；服务端 setValue 会推进来，客户端输入会派发事件带回去 */
   @property({ type: String }) value = '';
 
-  /** 语法模式：plain / yaml / shell / nginx / properties */
+  /** 语法模式：plain / yaml / json / shell / nginx / properties */
   @property({ type: String }) mode = 'plain';
 
   /** 只读开关 */
@@ -41,6 +64,12 @@ export class CodeEditorElement extends LitElement {
   private view: EditorView | null = null;
   /** 服务端推值引发的 docChanged 不回发事件，否则成环 */
   private applying = false;
+  /**
+   * 粘贴标记：paste DOM 事件先于本次内容变更的事务产生，
+   * updateListener 里消费一次后复位。用于让 value-changed 区分
+   * 「用户粘贴」和「手动键入」——调用方据此决定要不要自动排版。
+   */
+  private pasteFlag = false;
 
   static styles = css`
     :host {
@@ -80,14 +109,24 @@ export class CodeEditorElement extends LitElement {
           basicSetup,
           this.langComp.of(this.langExtension()),
           this.readOnlyComp.of(EditorState.readOnly.of(this.readOnly)),
+          // CodeMirror 自己的 paste 处理之前先打标记：domEventHandlers 在内部
+          // 处理链路之前执行，保证 updateListener 看到的 docChanged 能归属到粘贴
+          EditorView.domEventHandlers({
+            paste: () => {
+              this.pasteFlag = true;
+              return false;
+            },
+          }),
           EditorView.updateListener.of((u) => {
             if (!u.docChanged || this.applying) {
               return;
             }
+            const pasted = this.pasteFlag;
+            this.pasteFlag = false;
             this.value = u.state.doc.toString();
             this.dispatchEvent(
               new CustomEvent('value-changed', {
-                detail: { value: this.value },
+                detail: { value: this.value, pasted },
                 bubbles: true,
                 composed: true,
               })
@@ -138,6 +177,10 @@ export class CodeEditorElement extends LitElement {
     switch (this.mode) {
       case 'yaml':
         return yaml();
+      case 'json':
+        // 语言段与配色段放进同一个 compartment：切走 json 时配色一并撤掉，
+        // 不会把 JSON 的蓝绿橙紫溅到别的模式上
+        return [json(), syntaxHighlighting(jsonHighlightStyle)];
       case 'shell':
         return StreamLanguage.define(shell);
       case 'nginx':

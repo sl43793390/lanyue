@@ -363,6 +363,19 @@ body {
     color: var(--lumo-secondary-text-color);
 }
 
+/* Linux 命令查询：命令列的超链接样式（tertiary-inline 按钮加下划线，看起来就是链接） */
+.cmd-link {
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+/* 示例命令列：等宽字体，命令的可读性靠它 */
+.mono-cell {
+    font-family: var(--lumo-font-family-monospace);
+    font-size: var(--lumo-font-size-s);
+}
+
 .log-detail-name {
     max-width: 420px;
     overflow: hidden;

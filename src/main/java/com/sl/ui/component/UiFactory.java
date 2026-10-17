@@ -61,6 +61,13 @@ public final class UiFactory {
         return button;
     }
 
+    /** 积极操作按钮（绿色）。「生成密码」这类放行/产出类动作用它，和普通主色区分开。 */
+    public static Button success(String text, Runnable action) {
+        Button button = new Button(text, event -> action.run());
+        button.addThemeVariants(ButtonVariant.LUMO_PRIMARY, ButtonVariant.LUMO_SUCCESS);
+        return button;
+    }
+
     /** 普通按钮。 */
     public static Button button(String text, Runnable action) {
         return new Button(text, event -> action.run());

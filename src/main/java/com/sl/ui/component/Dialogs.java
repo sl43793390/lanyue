@@ -4,6 +4,8 @@ import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.confirmdialog.ConfirmDialog;
+import com.vaadin.flow.component.dialog.Dialog;
+import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.notification.Notification;
 import com.vaadin.flow.component.notification.NotificationVariant;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
@@ -92,6 +94,28 @@ public final class Dialogs {
                 onConfirm.run();
             }
         });
+        dialog.open();
+    }
+
+    /**
+     * 单按钮提示弹窗，只有一个「确定」。
+     * <p>
+     * 「JSON 格式校验失败」这类提示只需要用户看一眼点掉、不需要做选择，
+     * 而 {@link ConfirmDialog} 的取消按钮关不掉（只能置灰不可点的外框，按钮还在），
+     * 所以这里用 {@link Dialog} 自己摆一个。
+     */
+    public static void alert(String header, String message) {
+        Dialog dialog = new Dialog();
+        dialog.setHeaderTitle(header);
+        dialog.setModal(true);
+        dialog.setDraggable(false);
+        dialog.setResizable(false);
+        dialog.setWidth("360px");
+
+        Span text = new Span(message);
+        text.getStyle().set("white-space", "pre-wrap");
+        dialog.add(text);
+        dialog.getFooter().add(dialogActions(primaryButton("确定", dialog::close)));
         dialog.open();
     }
 

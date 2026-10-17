@@ -262,3 +262,246 @@ CREATE TABLE IF NOT EXISTS "app_setting" (
                                "update_time" VARCHAR(32),
                                PRIMARY KEY ("setting_key")
 );
+
+-- ----------------------------
+-- Table structure for linux_cmd（Linux 命令查询，Linux工具 → Linux命令查询）
+--   cmd_name      命令名，主键（命令名天然唯一，不另造 ID）
+--   cmd_category  分类（压缩打包 / 文本处理 / 网络等），列表分组排序用
+--   cmd_summary   功能说明（一句话）
+--   cmd_params    参数说明，一行一个参数：参数 + 两个空格 + 说明
+--   cmd_examples  使用示例，一行一条：命令 => 说明
+--                 （=> 是命令与说明的分隔符；竖线 | 在 shell 命令里太常见不能用。
+--                  第一条示例会作为详情弹窗输入框的默认命令）
+--   cmd_remark    备注（坑点），可为空
+--
+-- 表结构与 DbInitializer.LINUX_CMD 保持一致，改一处要改两处。
+-- 不执行本脚本时 DbInitializer 启动会自动建表（只建结构不灌数据），
+-- 这一段用 INSERT OR IGNORE 灌种子命令，可重复执行。
+-- 全量命令数据（152 条，Rocky Linux 8.6 基准）在项目根目录 linux_commands.csv，
+-- 用 scripts/import-linux-cmd.py 导入；本段种子只是最小演示集。
+-- ----------------------------
+DROP TABLE IF EXISTS "linux_cmd";
+CREATE TABLE "linux_cmd" (
+                             "cmd_name" VARCHAR(64) NOT NULL,
+                             "cmd_category" VARCHAR(64),
+                             "cmd_summary" VARCHAR(2000) NOT NULL,
+                             "cmd_params" VARCHAR(3000),
+                             "cmd_examples" VARCHAR(4000),
+                             "cmd_remark" VARCHAR(1000),
+                             PRIMARY KEY ("cmd_name")
+);
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('tar', '压缩打包', '打包/解包归档文件，常配合 gzip 压缩。只打包不压缩叫归档，加 -z 才走 gzip。',
+'-c  创建新的归档
+-x  从归档中解出文件
+-z  用 gzip 压缩/解压（.tar.gz）
+-j  用 bzip2（.tar.bz2）
+-v  显示过程
+-f  指定归档文件名（必须紧跟文件名）
+-C  解压到指定目录',
+'tar -czvf backup.tar.gz /data/app => 打包压缩 /data/app 到 backup.tar.gz
+tar -xzvf backup.tar.gz => 解压到当前目录
+tar -xzvf backup.tar.gz -C /opt/app => 解压到指定目录
+tar -tf backup.tar.gz => 只看归档里有什么，不解压',
+'-f 后面必须紧跟文件名，所以 -czvf 这种连写顺序不能乱');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('grep', '文本处理', '按关键字/正则过滤文本行，查日志最常用，常配合管道使用。',
+'-i  忽略大小写
+-n  显示行号
+-r  递归搜目录
+-c  只统计匹配行数
+-v  反选（排除匹配行）
+-A n / -B n  显示匹配行后/前 n 行',
+'grep -n ''ERROR'' app.log => 找出含 ERROR 的行并显示行号
+grep -c ''ERROR'' app.log => 统计 ERROR 出现的行数
+tail -f app.log | grep --color ''Timeout'' => 实时滚动日志里高亮看 Timeout
+grep -rn ''listen 80'' /etc/nginx => 递归搜目录，定位是哪段配置写了 listen 80',
+'');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('find', '文件与目录', '按名字/大小/时间在目录树里找文件，找到后还能用 -exec 顺手执行动作。',
+'-name  按文件名匹配（通配符记得加引号）
+-size  按大小（+100M = 大于 100MB）
+-mtime n  n 天前修改过（+7 = 7 天以前）
+-type f / d  只找文件 / 目录
+-exec cmd {} \;  对每个找到的文件执行 cmd',
+'find /var/log -name ''*.log'' => 找出 /var/log 下所有 .log 文件
+find / -size +500M -type f 2>/dev/null => 全盘找大于 500MB 的文件
+find /data -mtime +7 -name ''*.tmp'' -delete => 删除 7 天前的临时文件',
+'');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('ps', '进程与系统', '快照式列出进程。排查进程在不在、启动参数是什么用 ps，动态看占用用 top。',
+'-ef  全格式列出所有进程（SysV 风格）
+aux  BSD 风格，含 CPU/内存占用
+--sort=-%mem  按内存降序',
+'ps -ef | grep java => 找 java 进程及启动参数
+ps aux --sort=-%mem | head -10 => 内存占用最高的前 10 个进程',
+'grep 过滤时总会多出一行 grep 自己，加 | grep -v grep 排除');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('top', '进程与系统', '实时动态看 CPU/内存占用与进程排行。交互键：P 按 CPU 排、M 按内存排、q 退出。',
+'-d n  刷新间隔秒数
+-p pid  只盯指定进程',
+'top => 交互式看整体负载（默认 3 秒刷新）
+top -p 1234 => 只看 PID 1234 这一个进程
+top -b -n 1 > top.txt => 批处理模式输出一次快照，适合脚本采集',
+'');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('free', '进程与系统', '看内存使用。重点看 available：真正还能分配给新程序的量。',
+'-h  人性化单位
+-m  以 MB 计',
+'free -h => 内存与交换分区概览',
+'buff/cache 是内核缓存不算被占用；别看 free 列吓自己，看 available');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('ss', '网络', '看监听端口与连接状态。netstat 的现代替代品，输出更快更全。',
+'-t  tcp
+-u  udp
+-l  只看监听（LISTEN）
+-n  不做域名/服务名反解（快）
+-p  显示占用端口的进程（需 root）',
+'ss -tlnp => 本机监听了哪些 TCP 端口、被谁监听
+ss -tnp | grep 6379 => 谁连着 6379',
+'');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('netstat', '网络', '老牌的网络连接查看工具，新系统建议用 ss，这里留给老发行版。',
+'-tlnp  tcp + 监听 + 数字 + 进程
+-rn  路由表',
+'netstat -tlnp => 同 ss -tlnp，老系统用法
+netstat -rn => 看路由表和默认网关',
+'');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('lsof', '进程与系统', '列出进程打开的文件。Linux 下一切皆文件，所以端口占用、被删但仍被写的日志都能查。',
+'-i :port  查端口占用
+-p pid  查某进程打开的文件
+-u user  查某用户打开的文件',
+'lsof -i :8080 => 谁占着 8080 端口
+lsof -p 1234 => PID 1234 打开了哪些文件
+lsof | grep deleted => 已删除但空间未释放的文件（磁盘满了先查这个）',
+'');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('df', '磁盘', '看文件系统整体磁盘占用。磁盘报警第一反应就是 df -h。',
+'-h  人性化单位（K/M/G）
+-i  看 inode 用量
+-T  显示文件系统类型',
+'df -h => 各挂载点磁盘使用率
+df -i => 各挂载点 inode 使用率',
+'磁盘没满但写不进文件？df -i 看 inode 是不是用光了');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('du', '磁盘', '统计目录/文件实际占多大，找出谁把磁盘吃满就靠它。',
+'-h  人性化单位
+-s  只给总计，不逐个列子项
+--max-depth=1  只展开一层子目录',
+'du -sh /data => /data 一共多大
+du -h --max-depth=1 /var | sort -rh | head -10 => /var 下哪个子目录最大（前 10）',
+'du 是扫文件现统计，正在写的大文件和挂载点会让结果和 df 对不上，属正常');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('tail', '文本处理', '看文件末尾。加 -f 变成追着滚动看，是盯日志的标准姿势。',
+'-n n  看末尾 n 行
+-f  持续跟踪新写入
+-F  同 -f，且文件被轮换（改名重建）后自动跟上新文件',
+'tail -f app.log => 实时滚动看日志
+tail -n 200 app.log => 看最后 200 行
+tail -F app.log | grep --color ERROR => 滚动日志里只看 ERROR',
+'日志会 logrotate 轮换的场景用 -F，-f 会跟丢');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('awk', '文本处理', '按列处理文本。取 ps/netstat 输出的某一列、做合计统计都靠它。',
+'-F  指定分隔符
+{print $n}  打印第 n 列（$0 整行，$NF 最后一列）',
+'awk ''{print $1}'' access.log => 取访问日志第一列（客户端 IP）
+ps aux | awk ''NR>1 {s+=$6} END {print s}'' => 汇总所有进程内存（KB）
+awk -F: ''{print $1}'' /etc/passwd => 按冒号切列，取用户名',
+'');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('sed', '文本处理', '流编辑器，批量替换/删除文本行，改配置文件最常用的非交互手段。',
+'s/old/new/g  替换（g 全行替换）
+-i  直接改文件（不加则只打印结果）
+-n xp  只打印第 x 行',
+'sed -i ''s/8080/9090/'' application.properties => 把文件里的 8080 改成 9090
+sed -n ''100,120p'' app.log => 只看 100 到 120 行
+sed -i ''/^$/d'' notes.txt => 删除空行',
+'-i 直接改文件没有撤销，改之前先 cp 一份');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('chmod', '权限', '改文件/目录的读写执行权限。数字 755 = rwxr-xr-x，目录必须有 x 才能进入。',
+'-R  递归（对目录）
+数字含义  4=r 2=w 1=x，三位分别对应属主/组/其他人',
+'chmod +x deploy.sh => 给脚本加执行权限
+chmod -R 755 /opt/app => 目录及内部全部 rwxr-xr-x
+chmod 600 id_rsa => 私钥只给自己读写（ssh 强制要求）',
+'');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('chown', '权限', '改文件/目录的属主与属组，web 目录权限问题的另一半。',
+'-R  递归
+user:group  同时改属主和属组；只写 user 则只改属主',
+'chown -R nginx:nginx /usr/share/nginx/html => 网站目录交给 nginx 用户
+chown appuser /data/app/app.log => 只改属主',
+'');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('systemctl', '服务管理', 'systemd 的服务管理入口：启停、开机自启、看状态、看日志。',
+'status/start/stop/restart  常规动作
+enable/disable  设/取消开机自启
+list-units  列出服务',
+'systemctl status nginx => 看 nginx 状态和最近几条日志
+systemctl enable --now docker => 设开机自启并立即启动（一步到位）
+systemctl list-units --type=service --state=running => 正在运行的服务',
+'restart 会断开连接重拉；只是改了配置想热加载，优先 reload');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('journalctl', '服务管理', '看 systemd 服务的日志（systemctl status 里那几行不够看时用它）。',
+'-u unit  只看某个服务
+-f  持续跟踪
+--since / --until  按时间过滤',
+'journalctl -u nginx -f => 持续跟踪 nginx 日志
+journalctl -u app --since ''2026-10-17 08:00'' => 看某服务 8 点以来的日志',
+'');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('curl', '网络', '命令行 HTTP 客户端。测接口连通性、带 header 调试、下载文件都用它。',
+'-X  指定方法（GET/POST/...）
+-H  加请求头
+-d  请求体（加了默认变 POST）
+-I  只看响应头
+-o / -O  输出到文件',
+'curl -I http://127.0.0.1:8080/actuator/health => 只看健康检查的响应头和状态码
+curl -d ''a=1&b=2'' http://127.0.0.1:8080/api => POST 一段表单数据
+curl -o app.jar http://repo.local/app.jar => 下载文件到本地',
+'内网机器不通时先 curl -v 看卡在哪一步（DNS/连接/响应）');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('scp', '文件传输', '基于 ssh 的远程复制，机器之间拷文件最省事的方式（配好密钥后无需密码）。',
+'-r  递归拷目录
+-P port  指定端口（大写 P，区别于 ssh 的小写 -p）',
+'scp app.jar root@192.168.80.160:/opt/app/ => 本机文件推到远端
+scp root@192.168.80.160:/var/log/app.log ./ => 远端文件拉回本机
+scp -r dist root@192.168.80.160:/usr/share/nginx/ => 整个目录推上去',
+'');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('crontab', '定时任务', '管理用户的定时任务。时间格式：分 时 日 月 周 命令。',
+'-l  列出当前任务
+-e  编辑（保存即生效）',
+'crontab -l => 看当前用户的定时任务
+crontab -e => 编辑；加一行 0 2 * * * /opt/backup.sh 即每天凌晨 2 点执行',
+'编辑保存即生效，不用重启任何服务；排查没执行先看 /var/log/cron');
+
+INSERT OR IGNORE INTO "linux_cmd" ("cmd_name", "cmd_category", "cmd_summary", "cmd_params", "cmd_examples", "cmd_remark") VALUES
+('history', '其他', '看当前用户执行过的命令。每条前面带序号，叹号序号可以直接重跑。',
+'n  只显示最近 n 条
+-c  清空历史',
+'history | grep systemctl => 找之前敲过的 systemctl 命令
+history 20 => 最近 20 条',
+'多个终端共用一份历史，退出会话时才落盘');
