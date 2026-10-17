@@ -225,12 +225,25 @@
             <version>2.0.65</version>
         </dependency>
 
-        <!-- 国密摘要：加密工具页的 SM3 / SM4 等算法由 BC provider 提供。
-             用 jdk18on 而不是旧项目里的 jdk15on（那是给 JDK 8 之前的老包名，且版本停在 1.60）。 -->
+        <!--
+            国密摘要：加密工具页的 SM3 / SM4 等算法由 BC provider 提供。
+            用 jdk18on 而不是旧项目里的 jdk15on（那是给 JDK 8 之前的老包名，且版本停在 1.60）。 -->
         <dependency>
             <groupId>org.bouncycastle</groupId>
             <artifactId>bcprov-jdk18on</artifactId>
             <version>1.81</version>
+        </dependency>
+
+        <!--
+            二维码生成（其他工具 → 二维码生成）：hutool 的 QrCodeUtil 只是外壳，
+            编码本体在 ZXing core 里，缺了它 QrCodeUtil 一调就 ClassNotFoundException。
+            已核对 hutool-all 5.8.37 的 QrCodeUtil 源码：只 import com.google.zxing.*，
+            不依赖 javase 模块，所以只补 core 一个包。
+        -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>core</artifactId>
+            <version>3.5.3</version>
         </dependency>
         <dependency>
             <!--

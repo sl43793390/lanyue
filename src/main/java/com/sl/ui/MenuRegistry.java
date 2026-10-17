@@ -11,11 +11,14 @@ import com.sl.ui.local.TomcatMgmtView;
 import com.sl.ui.remote.RemoteLogSearchView;
 import com.sl.ui.remote.RemoteServerListView;
 import com.sl.ui.tool.Base64CodecView;
+import com.sl.ui.tool.CronGeneratorView;
 import com.sl.ui.tool.EncryptionView;
 import com.sl.ui.tool.FlowchartView;
 import com.sl.ui.tool.JsonBeautifyView;
 import com.sl.ui.tool.LinuxCmdQueryView;
 import com.sl.ui.tool.LinuxOpsView;
+import com.sl.ui.tool.QrCodeView;
+import com.sl.ui.tool.RegexTestView;
 import com.sl.ui.tool.ScriptMgmtView;
 import com.sl.ui.tool.ScriptMonitorView;
 import com.sl.util.Constants;
@@ -94,7 +97,10 @@ public final class MenuRegistry {
             new Group("其他工具", List.of(
                     new Item("JSON美化", JsonBeautifyView.class, null),
                     new Item("Base64编解码", Base64CodecView.class, null),
-                    new Item("加密工具", EncryptionView.class, null))),
+                    new Item("加密工具", EncryptionView.class, null),
+                    new Item("二维码生成", QrCodeView.class, null),
+                    new Item("正则表达式测试", RegexTestView.class, null),
+                    new Item("Cron表达式生成器", CronGeneratorView.class, null))),
 
             new Group("用户管理", List.of(
                     new Item("用户管理", UserManagementView.class, Constants.ADD))));
