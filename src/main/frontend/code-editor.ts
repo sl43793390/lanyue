@@ -5,6 +5,10 @@
  * - value：编辑内容（客户端改动派发 value-changed 事件带回，detail.value 是全文）；
  * - mode：语法模式 plain / yaml / json / shell / nginx / properties；
  * - readOnly：只读开关。
+ * <p>
+ * 另有 placeholder（空文档占位提示，Decoration widget 实现、不进文档内容），
+ * 纯客户端装饰属性、不参与服务端同步，默认空串即关闭——文本对比页的两个
+ * 输入框复用了本组件，靠它显示「输入原始文本...」这类提示。
  *
  * 包选型（都在 pom 侧用 @NpmPackage 声明）：
  * - codemirror 元包：basicSetup 自带行号 / 撤销历史 / 括号匹配 / 代码折叠，
@@ -18,6 +22,9 @@ import { LitElement, html, css, PropertyValues } from 'lit';
 import { customElement, property } from 'lit/decorators.js';
 import { EditorView } from '@codemirror/view';
 import { EditorState, Compartment, Extension } from '@codemirror/state';
+import {
+  ViewPlugin, ViewUpdate, Decoration, DecorationSet, WidgetType,
+} from '@codemirror/view';
 import { basicSetup } from 'codemirror';
 import { yaml } from '@codemirror/lang-yaml';
 import { json } from '@codemirror/lang-json';
@@ -46,6 +53,51 @@ const jsonHighlightStyle = HighlightStyle.define([
   { tag: t.invalid, color: '#d32f2f' },
 ]);
 
+/**
+ * 空文档占位提示：用 Decoration widget 挂在文档开头，不进入文档内容
+ * （所以不会混进 getValue()，也不需要用户手动删）。空串时返回空扩展数组，
+ * 不配 placeholder 的页面行为零变化。
+ */
+function placeholderExtension(text: string): Extension {
+  if (!text) {
+    return [];
+  }
+  const build = (empty: boolean): DecorationSet => (empty
+    ? Decoration.set([Decoration.widget({ widget: new PlaceholderWidget(text), side: -1 }).range(0)])
+    : Decoration.none);
+  return ViewPlugin.fromClass(class {
+    decorations: DecorationSet;
+    constructor(view: EditorView) {
+      this.decorations = build(view.state.doc.length === 0);
+    }
+    update(update: ViewUpdate): void {
+      if (update.docChanged) {
+        this.decorations = build(update.view.state.doc.length === 0);
+      }
+    }
+    // 注意：fromClass 的第二个参数不能省。这个版本的 @codemirror/view 只有拿到
+    // {decorations: v => v.decorations} 才会把实例上的 decorations 接进
+    // EditorView.decorations facet，省略时字段被静默忽略（占位提示不渲染）。
+  }, { decorations: (v) => v.decorations });
+}
+
+class PlaceholderWidget extends WidgetType {
+  constructor(private readonly text: string) {
+    super();
+  }
+
+  toDOM(): HTMLElement {
+    const span = document.createElement('span');
+    span.className = 'cm-placeholder';
+    span.textContent = this.text;
+    return span;
+  }
+
+  eq(other: WidgetType): boolean {
+    return other instanceof PlaceholderWidget && other.text === this.text;
+  }
+}
+
 @customElement('code-editor')
 export class CodeEditorElement extends LitElement {
 
@@ -58,9 +110,15 @@ export class CodeEditorElement extends LitElement {
   /** 只读开关 */
   @property({ type: Boolean }) readOnly = false;
 
+  /** 空文档时显示的占位提示；为空串时不渲染 */
+  @property({ type: String }) placeholder = '';
+
   /** 语言用 Compartment 挂载，切模式只 reconfigure 这一段，不重建编辑器 */
   private langComp = new Compartment();
   private readOnlyComp = new Compartment();
+  private placeholderComp = new Compartment();
+  /** 行高亮 compartment：文本对比页的行内 diff 标记，同样只 reconfigure 不重建 */
+  private highlightComp = new Compartment();
   private view: EditorView | null = null;
   /** 服务端推值引发的 docChanged 不回发事件，否则成环 */
   private applying = false;
@@ -98,6 +156,21 @@ export class CodeEditorElement extends LitElement {
       font-size: var(--code-editor-font-size, 15px) !important;
       line-height: 1.55;
     }
+    .cm-placeholder {
+      color: var(--lumo-tertiary-text-color, #9aa3af);
+      pointer-events: none;
+    }
+    /* 行高亮（文本对比页的行内 diff 标记）：整行背景 + 行首 2px 竖条。
+       行号槽在 .cm-gutter 里、不在 .cm-line 上，所以槽位不上色，
+       靠内容区底色 + 竖条标记，滚动时跟随行走，不会错位。 */
+    .cm-line-del {
+      background: rgba(255, 235, 233, 0.85);
+      box-shadow: inset 2px 0 0 #cf222e;
+    }
+    .cm-line-ins {
+      background: rgba(230, 255, 236, 0.85);
+      box-shadow: inset 2px 0 0 #1a7f37;
+    }
   `;
 
   protected firstUpdated(): void {
@@ -109,6 +182,8 @@ export class CodeEditorElement extends LitElement {
           basicSetup,
           this.langComp.of(this.langExtension()),
           this.readOnlyComp.of(EditorState.readOnly.of(this.readOnly)),
+          this.placeholderComp.of(placeholderExtension(this.placeholder)),
+          this.highlightComp.of([]),
           // CodeMirror 自己的 paste 处理之前先打标记：domEventHandlers 在内部
           // 处理链路之前执行，保证 updateListener 看到的 docChanged 能归属到粘贴
           EditorView.domEventHandlers({
@@ -150,6 +225,11 @@ export class CodeEditorElement extends LitElement {
         effects: this.readOnlyComp.reconfigure(EditorState.readOnly.of(this.readOnly)),
       });
     }
+    if (changed.has('placeholder')) {
+      this.view.dispatch({
+        effects: this.placeholderComp.reconfigure(placeholderExtension(this.placeholder)),
+      });
+    }
     if (changed.has('value') && this.view.state.doc.toString() !== this.value) {
       this.applying = true;
       try {
@@ -171,6 +251,34 @@ export class CodeEditorElement extends LitElement {
     if (this.view) {
       this.view.focus();
     }
+  }
+
+  /**
+   * 行高亮：给指定行（1 起）整行上背景色。文本对比页用它把 diff 结果直接标回编辑器——
+   * kind='del' 红底（被删除/被修改的行），kind='ins' 绿底（被新增/被修改的行）；
+   * 传空数组即清除。行号越界自动忽略；内容变化后标记会跟着位置映射，
+   * 调用方应在文本变更时主动清除，避免颜色错位到别的行上。
+   */
+  setLineHighlights(lines: number[], kind: 'del' | 'ins'): void {
+    if (!this.view) return;
+    const doc = this.view.state.doc;
+    const cls = kind === 'del' ? 'cm-line-del' : 'cm-line-ins';
+    const ranges = lines
+      .filter((no) => no >= 1 && no <= doc.lines)
+      .map((no) => Decoration.line({ class: cls }).range(doc.line(no).from));
+    const set = ranges.length ? Decoration.set(ranges) : Decoration.none;
+    this.view.dispatch({ effects: this.highlightComp.reconfigure(EditorView.decorations.of(set)) });
+  }
+
+  /**
+   * 把某一行（1 起）滚到视口中间：只滚、不改选区、不抢焦点
+   * （对比完跳到第一处差异用；直接改 selection 会把两侧编辑器的光标都吸走）。
+   */
+  scrollToLine(line: number): void {
+    if (!this.view) return;
+    const doc = this.view.state.doc;
+    const n = Math.min(Math.max(1, Math.trunc(line) || 1), doc.lines);
+    this.view.dispatch({ effects: EditorView.scrollIntoView(doc.line(n).from, { y: 'center' }) });
   }
 
   private langExtension(): Extension {

@@ -1013,6 +1013,150 @@ vaadin-text-area[has-label]::part(label) {
     color: #155724;
 }
 
+/* ============================================================
+   github优选：卡片视图。
+   一张卡片一个项目：标题条（项目名）→ 介绍（三行折叠）→ 底部分类角标 +
+   ⋯ 菜单（编辑/删除）+ 右向箭头（跳转 GitHub）。分类分组之间用 .view-divider 分隔。
+   ============================================================ */
+.github-card-area {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-content: flex-start;
+    width: 100%;
+}
+
+/* 分类标题行：分类名 + 项目数 */
+.github-cat-head {
+    width: 100%;
+    padding-top: 4px;
+}
+
+.github-cat-count {
+    font-size: var(--lumo-font-size-xs);
+    color: var(--lumo-tertiary-text-color);
+}
+
+.github-card {
+    display: flex;
+    flex-direction: column;
+    width: 340px;
+    box-sizing: border-box;
+    background-color: var(--lumo-base-color);
+    border: 1px solid var(--lumo-contrast-15pct);
+    border-radius: var(--lumo-border-radius-m);
+    box-shadow: 0 1px 2px rgba(31, 41, 55, 0.05);
+    overflow: hidden;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.github-card:hover {
+    border-color: rgba(59, 130, 246, 0.55);
+    box-shadow: 0 2px 6px rgba(31, 41, 55, 0.1);
+}
+
+/* 卡片可点击的中间部位（标题 + 介绍） */
+.github-card-body {
+    cursor: pointer;
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+/* 标题条：浅蓝底 + 深蓝字（GitHub 的品牌色系），单行截断 */
+.github-card-title {
+    box-sizing: border-box;
+    padding: 8px 12px;
+    background-color: #e3ebfb;
+    color: #17408b;
+    font-size: var(--lumo-font-size-m);
+    font-weight: 600;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 介绍区：固定三行，超出折叠 */
+.github-card-content {
+    box-sizing: border-box;
+    padding: 6px 12px 8px;
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+    white-space: pre-wrap;
+    word-break: break-all;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.5;
+    min-height: calc(3 * 1.5em);
+}
+
+/* 空介绍时把 min-height 撤掉，别撑出一个空白块 */
+.github-card-content:empty {
+    min-height: 0;
+}
+
+/* 卡片底部：分类角标 + ⋯ + 右向箭头 */
+.github-card-footer {
+    flex: 0 0 auto;
+    padding: 0 8px 6px;
+}
+
+/* 分类角标：小圆角浅灰底 */
+.github-card-cat {
+    box-sizing: border-box;
+    padding: 1px 8px;
+    border-radius: var(--lumo-border-radius-s, 0.25rem);
+    background-color: var(--lumo-contrast-5pct);
+    color: var(--lumo-secondary-text-color);
+    font-size: var(--lumo-font-size-xs);
+    white-space: nowrap;
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 三个点按钮：与标题条同色系的悬停反馈 */
+.github-card-dots {
+    min-width: 30px;
+    padding: 2px 6px;
+    font-size: 16px;
+    line-height: 1;
+    letter-spacing: 1px;
+    color: var(--lumo-secondary-text-color);
+}
+
+.github-card-dots:hover {
+    background-color: #e3ebfb;
+    color: #17408b;
+}
+
+/* 右向箭头：主色、无底色，hover 时加深 */
+.github-card-arrow {
+    min-width: 30px;
+    padding: 2px 6px;
+    color: var(--lumo-primary-text-color);
+}
+
+.github-card-arrow:hover {
+    background-color: #e3ebfb;
+    color: #17408b;
+}
+
+/* 分类管理弹窗的列表行 */
+.github-cat-row {
+    border-bottom: 1px solid var(--lumo-contrast-10pct);
+    padding-bottom: 4px;
+}
+
+.github-cat-row-name {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 220px;
+}
+
 /* ------------------------------------------------------------------
    Grid 偶数行浅蓝背景（全局，所有页面的 vaadin-grid 一律生效）。
    说明：vaadin-grid 按 data index 的奇偶分配 part，index 从 0 起算，
@@ -1123,7 +1267,12 @@ vaadin-grid::part(odd-row-cell) {
  * ================================================================== */
 
 .cron-generator-view {
-    min-width: 960px;
+  min-width: 960px;
+}
+
+/* 文本对比：双栏 + 结果区的最小可用宽度，再窄就把并排视图压没了 */
+.text-diff-view {
+  min-width: 960px;
 }
 
 /* 顶部三个页签 */
