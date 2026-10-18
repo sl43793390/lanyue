@@ -16,13 +16,13 @@ import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.UI;
 import com.vaadin.flow.component.button.Button;
-import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.checkbox.Checkbox;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.dialog.Dialog;
+import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.Span;
-import com.vaadin.flow.component.orderedlayout.FlexComponent;
-import com.vaadin.flow.component.orderedlayout.HorizontalLayout;
+import com.vaadin.flow.component.icon.Icon;
+import com.vaadin.flow.component.icon.VaadinIcon;
 import com.vaadin.flow.component.orderedlayout.VerticalLayout;
 import com.vaadin.flow.component.textfield.PasswordField;
 import com.vaadin.flow.component.textfield.TextField;
@@ -40,8 +40,9 @@ import java.util.function.Consumer;
  * 常用 Linux 命令。
  * <p>
  * 把运维日常要 ssh 上去敲的那些事收成按钮：防火墙开关与放行端口、用户与 sudo 授权、
- * 服务启停、系统巡检（内存 / 磁盘 / 进程 / 端口 / 日志 / 时间同步 / SELinux），
- * 以及重启关机这类危险动作。
+ * 服务启停、系统巡检（内存 / 磁盘 / 进程 / 端口 / 日志 / 时间同步 / SELinux 状态）、
+ * crontab 在线编辑、主机名修改。改系统安全策略一类的高危动作不在本页提供——
+ * 真要改请登录目标机手动执行，页面只做查询与常规运维。
  * <p>
  * <b>命令不是写死的。</b>连上目标机先做一次环境探测（{@link LinuxOpsService#probe()}），
  * 拿到发行版、是不是 root、免密 sudo 有没有、防火墙是 firewalld 还是 ufw、有没有 SELinux，
@@ -53,6 +54,9 @@ import java.util.function.Consumer;
  * <p>
  * <b>连接自愈。</b>命令通道走 {@link SshCommandRunner}，共享连接被空闲回收（15 分钟）之后
  * 下一次操作会自动重连，页面开着不动很久也不会「点一下就报错」。
+ * <p>
+ * <b>布局。</b>连接区是一张通栏卡片（选机器 + 连接 + 环境信息条）；连接成功后下方按功能
+ * 分组的操作卡片网格（两列自适应、窄屏单列），每组一枚彩色图标 + 标题，按钮行走紧凑间距。
  */
 @Service
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
@@ -69,10 +73,14 @@ public class LinuxOpsView extends ViewBase {
     private final Button connectBtn = UiFactory.primary("连接", this::connect);
     private final Span busyLabel = new Span();
     private final Span envLabel = new Span();
+    /** 未连接时的引导卡：连接成功后隐藏，操作区接手 */
+    private final Div emptyCard = new Div();
 
     // ---- 操作区 ----
-    private final VerticalLayout opsArea = new VerticalLayout();
+    private final Div opsArea = new Div();
     private final Span firewallTitle = new Span();
+    /** 防火墙卡头右侧的元信息：哪一套防火墙、开没开（连接后由探测结果填充） */
+    private final Span firewallMeta = new Span();
     /** 需要 root（或有免密 sudo）的动作，探测到权限不够时统一置灰 */
     private final List<Button> privilegedButtons = new ArrayList<>();
 
@@ -83,8 +91,6 @@ public class LinuxOpsView extends ViewBase {
     private final TextField hostnameField = UiFactory.textField();
     /** crontab 编辑的目标用户：自己不需要提权，别人的（root）需要 root / 免密 sudo */
     private final ComboBox<String> cronUserCombo = new ComboBox<>();
-    /** 探测到目标机没有 SELinux（Ubuntu / Debian 默认不带）时统一置灰 */
-    private final List<Button> selinuxButtons = new ArrayList<>();
 
     private static final String CRON_USER_CURRENT = "当前登录用户";
 
@@ -100,38 +106,52 @@ public class LinuxOpsView extends ViewBase {
         this.connectionInfoMapper = connectionInfoMapper;
 
         add(title("常用 Linux 命令"));
-        add(subtitle("连上目标机后直接执行日常运维动作：防火墙、用户与 sudo 授权、服务启停、系统巡检。"
-                + "命令按目标机的发行版自动选择，需要 root 的动作在权限不足时会置灰。"
-                + "SSH 连接空闲断开后下一次操作会自动重连。"));
+        add(subtitle("连上目标机后直接执行日常运维动作：防火墙、用户与 sudo 授权、服务启停、系统巡检、"
+                + "定时任务、主机名。命令按目标机的发行版自动选择，需要 root 的动作在权限不足时会置灰。"
+                + "SSH 连接空闲断开后，下一次操作会自动重连。"));
 
-        add(buildConnectRow());
-        envLabel.addClassName("docker-env-label");
-        envLabel.getStyle().set("overflow-wrap", "anywhere");
-        add(envLabel);
+        add(buildConnectCard());
 
         buildOpsArea();
         opsArea.setVisible(false);
         add(opsArea);
+        add(buildEmptyCard());
 
         loadCandidateHosts();
     }
 
     // ------------------------------------------------------------------
-    // 连接区
+    // 连接区（一张通栏卡片：选机器 + 连接 + 环境信息条）
     // ------------------------------------------------------------------
 
-    private Component buildConnectRow() {
+    private Component buildConnectCard() {
         hostCombo.setWidth("260px");
         hostCombo.setPlaceholder("选择一台已配置的服务器");
         hostCombo.setItemLabelGenerator(item -> item.getIdHost() + " (" + item.getIdUser() + ")");
         hostCombo.setAllowCustomValue(false);
 
-        HorizontalLayout row = new HorizontalLayout(
-                UiFactory.fieldRow("目标服务器", "80px", hostCombo), connectBtn, busyLabel);
-        row.setClassName("view-toolbar");
-        row.setAlignItems(FlexComponent.Alignment.CENTER);
-        row.setFlexGrow(1, busyLabel);
-        return row;
+        Div head = new Div();
+        head.addClassName("ops-connect-head");
+        Icon plug = new Icon(VaadinIcon.PLUG);
+        plug.addClassName("ops-card-icon");
+        plug.addClassName("ops-icon-blue");
+        Span headTitle = new Span("目标服务器");
+        headTitle.addClassName("ops-connect-title");
+        head.add(plug, headTitle);
+
+        Div row = new Div(UiFactory.fieldRow("服务器", "72px", hostCombo), connectBtn, busyLabel);
+        row.addClassName("ops-connect-row");
+        busyLabel.addClassName("ops-busy");
+
+        envLabel.addClassName("docker-env-label");
+        envLabel.getStyle().set("overflow-wrap", "anywhere");
+        envLabel.setText("尚未连接。选择一台服务器，点「连接」后这里会显示目标机的环境信息。");
+        Div envBar = new Div(new Icon(VaadinIcon.INFO), envLabel);
+        envBar.addClassName("ops-env-bar");
+
+        Div card = new Div(head, row, envBar);
+        card.addClassName("ops-connect-card");
+        return card;
     }
 
     private void loadCandidateHosts() {
@@ -173,8 +193,8 @@ public class LinuxOpsView extends ViewBase {
         }
         closeRunner();
         setBusy(true, "正在连接 " + info.getIdHost() + " 并检测环境 …");
-        opsArea.setVisible(false);
-        envLabel.setText("");
+        emptyCard.setVisible(false);
+        envLabel.setText("正在连接并读取目标机环境 …");
 
         runAsync("连接 " + info.getIdHost(), () -> {
             SshCommandRunner newRunner = new SshCommandRunner(info);
@@ -191,31 +211,26 @@ public class LinuxOpsView extends ViewBase {
             applyEnv();
         }, e -> {
             setBusy(false, "");
+            emptyCard.setVisible(true);
+            envLabel.setText("尚未连接。选择一台服务器，点「连接」后这里会显示目标机的环境信息。");
             Dialogs.error("连接失败：" + StrUtil.emptyToDefault(e.getMessage(), e.getClass().getSimpleName()));
         });
     }
 
-    /** 探测结果落到界面上：状态行、防火墙那一组的标题、按钮可用性 */
+    /** 探测结果落到界面上：环境信息条、防火墙元信息、按钮可用性 */
     private void applyEnv() {
         if (env == null) {
             return;
         }
         opsArea.setVisible(true);
+        emptyCard.setVisible(false);
         boolean canEscalate = env.canEscalate();
         String reason = "当前登录用户不是 root，且目标机上不能免密 sudo，这个动作做不了";
         for (Button button : privilegedButtons) {
             button.setEnabled(canEscalate);
-            if (!canEscalate) {
-                button.setTooltipText(reason);
-            }
-        }
-        // Ubuntu / Debian 默认没有 SELinux，相关按钮直接置灰，别让用户点了挨一句 getenforce: not found
-        if (!env.hasSelinux()) {
-            String selinuxReason = "目标机没有 SELinux（getenforce 不存在），无需此操作";
-            for (Button button : selinuxButtons) {
-                button.setEnabled(false);
-                button.setTooltipText(selinuxReason);
-            }
+            // 换一台权限足够的机器重连时，把上次留下的「权限不足」提示清掉，
+            // 否则按钮能点了，tooltip 还挂着红字说明
+            button.setTooltipText(canEscalate ? "" : reason);
         }
         // 非 root 且无免密 sudo 的账号看不了别人的 crontab，把「root」选项收掉
         if (!canEscalate) {
@@ -228,7 +243,7 @@ public class LinuxOpsView extends ViewBase {
             return;
         }
         envLabel.setText("已连接 " + hostLabel() + "　" + env.summary());
-        firewallTitle.setText("防火墙（" + env.firewallLabel() + "）");
+        firewallMeta.setText(env.firewallLabel());
         if (!canEscalate) {
             Dialogs.warn("当前登录用户 " + env.getLoginUser() + "（uid=" + env.getUid()
                     + "）不是 root 且不能免密 sudo，涉及改配置的动作已置灰。");
@@ -240,41 +255,96 @@ public class LinuxOpsView extends ViewBase {
     }
 
     // ------------------------------------------------------------------
-    // 操作区
+    // 操作区（分组卡片网格）
     // ------------------------------------------------------------------
 
     private void buildOpsArea() {
-        opsArea.setPadding(false);
-        opsArea.setSpacing(false);
-        opsArea.getStyle().set("gap", "16px");
+        opsArea.addClassName("ops-area");
 
-        opsArea.add(buildFirewallGroup());
-        opsArea.add(buildUserGroup());
-        opsArea.add(buildServiceGroup());
-        opsArea.add(buildInspectGroup());
-        opsArea.add(buildCrontabGroup());
-        opsArea.add(buildHostGroup());
-        opsArea.add(buildDangerGroup());
+        opsArea.add(buildFirewallCard());
+        opsArea.add(buildUserCard());
+        opsArea.add(buildServiceCard());
+        opsArea.add(buildInspectCard());
+        opsArea.add(buildCrontabCard());
+        opsArea.add(buildHostCard());
     }
 
-    /** 一组动作：小节标题 + 若干行 */
-    private VerticalLayout group(Component title, Component... rows) {
-        VerticalLayout box = new VerticalLayout();
-        box.setPadding(false);
-        box.setSpacing(false);
-        box.getStyle().set("gap", "8px");
-        box.add(title);
-        box.add(rows);
-        return box;
+    /** 未连接时的引导卡 */
+    private Div buildEmptyCard() {
+        Icon plug = new Icon(VaadinIcon.PLUG);
+        plug.addClassName("ops-card-icon");
+        plug.addClassName("ops-icon-blue");
+        Span desc = new Span("从上方选择一台已配置的服务器并点「连接」。连接成功后，这里会按功能分组列出"
+                + "防火墙、用户权限、服务管理、系统巡检、定时任务、主机名等日常运维操作；"
+                + "具体用哪条命令，会根据目标机的发行版自动选择。");
+        desc.addClassName("ops-empty-desc");
+        emptyCard.addClassName("ops-card");
+        emptyCard.addClassName("ops-empty-card");
+        emptyCard.add(plug, cardTitle("还没有连接服务器"), desc);
+        return emptyCard;
     }
 
-    /** 一行动作按钮：走 row-actions，与表格行内按钮同一套视觉与间距 */
-    private HorizontalLayout actionRow(Component... items) {
-        HorizontalLayout row = new HorizontalLayout(items);
-        row.setClassName("row-actions");
-        row.setAlignItems(FlexComponent.Alignment.CENTER);
-        row.getStyle().set("flex-wrap", "wrap");
-        row.setWidthFull();
+    /**
+     * 带右侧元信息的分组卡片：彩色圆形图标 + 标题 + 卡头右侧元信息 + 若干行动作。
+     * <p>
+     * 之所以不跟 {@link #opsCard} 共用名字：两者差在第四个参数，而动作行是 varargs，
+     * 同名重载在「传了 4 个以上参数」时编译器无法消歧，只能换个方法名。
+     *
+     * @param meta 卡头右侧的元信息（如防火墙类型与运行状态）
+     */
+    private Div opsCardWithMeta(VaadinIcon icon, String tone, Component title, Component meta, Component... rows) {
+        Icon badge = new Icon(icon);
+        badge.addClassName("ops-card-icon");
+        badge.addClassName("ops-icon-" + tone);
+
+        Div head = new Div(badge, title, meta);
+        head.addClassName("ops-card-head");
+
+        Div body = new Div();
+        body.addClassName("ops-card-body");
+        body.add(rows);
+
+        Div card = new Div(head, body);
+        card.addClassName("ops-card");
+        return card;
+    }
+
+    /**
+     * 分组卡片：彩色圆形图标 + 标题 + 若干行动作。
+     * <p>
+     * 布局全部走 CSS 类（{@code .ops-card} / {@code .ops-row}），Java 侧只搭组件树，
+     * 不再内联算 flex 比例——内联样式一旦多了，改一处漏一处的概率极高。
+     */
+    private Div opsCard(VaadinIcon icon, String tone, Component title, Component... rows) {
+        Icon badge = new Icon(icon);
+        badge.addClassName("ops-card-icon");
+        badge.addClassName("ops-icon-" + tone);
+
+        Div head = new Div(badge, title);
+        head.addClassName("ops-card-head");
+
+        Div body = new Div();
+        body.addClassName("ops-card-body");
+        body.add(rows);
+
+        Div card = new Div(head, body);
+        card.addClassName("ops-card");
+        return card;
+    }
+
+    /** 卡片标题：沿用全局小节标题的字号字重，再叠加卡片内的排版类 */
+    private Span cardTitle(String text) {
+        Span title = new Span(text);
+        title.addClassName("view-section-title");
+        title.addClassName("ops-card-title");
+        return title;
+    }
+
+    /** 卡片内的一行动作按钮：紧凑间距，flex 换行 */
+    private Div opsRow(Component... items) {
+        Div row = new Div();
+        row.addClassName("ops-row");
+        row.add(items);
         return row;
     }
 
@@ -285,32 +355,32 @@ public class LinuxOpsView extends ViewBase {
         return button;
     }
 
-    private Component buildFirewallGroup() {
+    private Component buildFirewallCard() {
         firewallTitle.addClassName("view-section-title");
+        firewallTitle.addClassName("ops-card-title");
         firewallTitle.setText("防火墙");
+        firewallMeta.addClassName("ops-card-meta");
 
         firewallProtoCombo.setItems(List.of("tcp", "udp"));
         firewallProtoCombo.setValue("tcp");
         firewallProtoCombo.setWidth("90px");
         firewallPortField.setPlaceholder("8080");
         firewallPortField.setWidth("110px");
-        portQueryField.setPlaceholder("8080");
-        portQueryField.setWidth("110px");
 
-        return group(firewallTitle,
-                actionRow(
+        return opsCardWithMeta(VaadinIcon.SHIELD, "blue", firewallTitle, firewallMeta,
+                opsRow(
                         UiFactory.rowAction("查看状态", () -> query("防火墙状态", () -> service.firewallDetail(env))),
                         privileged("开启防火墙", () -> confirmFirewall(true)),
                         privileged("关闭防火墙", () -> confirmFirewall(false)),
                         UiFactory.rowAction("重载规则", () -> query("重载防火墙规则", () -> service.firewallReload(env)))),
-                actionRow(new Span("端口"), firewallPortField, firewallProtoCombo,
+                opsRow(new Span("端口"), firewallPortField, firewallProtoCombo,
                         privileged("放行端口", this::openFirewallPort),
                         privileged("移除端口", this::closeFirewallPort)));
     }
 
-    private Component buildUserGroup() {
-        return group(section("用户与权限"),
-                actionRow(
+    private Component buildUserCard() {
+        return opsCard(VaadinIcon.USERS, "purple", cardTitle("用户与权限"),
+                opsRow(
                         UiFactory.rowAction("查看用户列表", () -> query("用户列表", () -> service.listUsers())),
                         privileged("创建用户…", this::openCreateUserDialog),
                         privileged("重置密码…", this::openResetPasswordDialog),
@@ -321,11 +391,11 @@ public class LinuxOpsView extends ViewBase {
                         privileged("删除用户…", this::openDeleteUserDialog)));
     }
 
-    private Component buildServiceGroup() {
+    private Component buildServiceCard() {
         unitField.setPlaceholder("服务名，如 nginx / docker");
         unitField.setWidth("240px");
-        return group(section("服务管理"),
-                actionRow(new Span("服务名"), unitField,
+        return opsCard(VaadinIcon.COGS, "green", cardTitle("服务管理"),
+                opsRow(new Span("服务名"), unitField,
                         UiFactory.rowAction("查看状态", () -> serviceOp("状态", () -> service.serviceStatus(unit(), env))),
                         privileged("启动", () -> serviceAction("启动", "start")),
                         privileged("停止", this::stopServiceConfirmed),
@@ -335,16 +405,18 @@ public class LinuxOpsView extends ViewBase {
                         UiFactory.rowAction("运行中的服务", () -> query("运行中的服务", () -> service.listRunningServices(env)))));
     }
 
-    private Component buildInspectGroup() {
-        return group(section("系统巡检"),
-                actionRow(
+    private Component buildInspectCard() {
+        portQueryField.setPlaceholder("8080");
+        portQueryField.setWidth("110px");
+        return opsCard(VaadinIcon.DASHBOARD, "orange", cardTitle("系统巡检"),
+                opsRow(
                         UiFactory.rowAction("系统概览", () -> query("系统概览", () -> service.overview())),
                         UiFactory.rowAction("磁盘空间", () -> query("磁盘空间与 inode", () -> service.diskUsage())),
                         UiFactory.rowAction("目录占用 Top", () -> query("目录占用 Top", () -> service.topDirectories())),
                         UiFactory.rowAction("进程 Top(CPU)", () -> query("进程占用 Top(CPU)", () -> service.topProcesses("cpu"))),
                         UiFactory.rowAction("进程 Top(内存)", () -> query("进程占用 Top(内存)", () -> service.topProcesses("mem"))),
                         UiFactory.rowAction("监听端口", () -> query("监听端口", () -> service.listeningPorts()))),
-                actionRow(new Span("端口占用"), portQueryField,
+                opsRow(new Span("端口占用"), portQueryField,
                         UiFactory.rowAction("查询", this::queryPortOwner),
                         UiFactory.rowAction("登录用户", () -> query("登录用户", () -> service.loggedInUsers())),
                         UiFactory.rowAction("系统日志(200行)", () -> query("系统日志", () -> service.systemLog(200))),
@@ -354,107 +426,30 @@ public class LinuxOpsView extends ViewBase {
     }
 
     /** 定时任务：按用户查看 crontab 与系统级定时配置，支持在线编辑（保存前自动备份） */
-    private Component buildCrontabGroup() {
+    private Component buildCrontabCard() {
         cronUserCombo.setItems(List.of(CRON_USER_CURRENT, "root"));
         cronUserCombo.setValue(CRON_USER_CURRENT);
         cronUserCombo.setWidth("170px");
-        return group(section("定时任务（crontab）"),
-                actionRow(new Span("目标用户"), cronUserCombo,
+        return opsCard(VaadinIcon.CALENDAR, "teal", cardTitle("定时任务（crontab）"),
+                opsRow(new Span("目标用户"), cronUserCombo,
                         UiFactory.rowAction("查看计划任务", () -> query("计划任务", () -> service.crontabList(cronTarget(), env))),
                         privileged("编辑 crontab…", this::openCrontabEditor)));
+    }
+
+    private Component buildHostCard() {
+        hostnameField.setPlaceholder("新主机名，如 app-node-01");
+        hostnameField.setWidth("240px");
+        return opsCard(VaadinIcon.SERVER, "blue", cardTitle("主机名与网络"),
+                opsRow(
+                        UiFactory.rowAction("主机名 / 网卡 / 路由", () -> query("主机与网络信息", () -> service.hostInfo())),
+                        new Span("新主机名"), hostnameField,
+                        privileged("修改主机名", this::confirmSetHostname)));
     }
 
     /** 编辑目标：选「当前登录用户」传空串，选具体用户传用户名 */
     private String cronTarget() {
         String value = StrUtil.trimToEmpty(cronUserCombo.getValue());
         return CRON_USER_CURRENT.equals(value) ? "" : value;
-    }
-
-    /**
-     * crontab 在线编辑：先取原文预填，保存时整体替换。
-     * 改自己的 crontab 不需要任何提权；改别人的（比如 root 的）由 {@link #privileged} 统一管权限。
-     */
-    private void openCrontabEditor() {
-        if (!checkEnv()) {
-            return;
-        }
-        String target = cronTarget();
-        boolean self = StrUtil.isBlank(target) || target.equals(env.getLoginUser());
-        if (!self && !ensurePrivilege("编辑用户 " + target + " 的 crontab")) {
-            return;
-        }
-        setBusy(true, "正在读取 crontab …");
-        runAsync("读取 crontab", () -> service.crontabRead(target, env), content -> {
-            setBusy(false, "");
-            showCrontabEditor(target, String.valueOf(content));
-        }, e -> {
-            setBusy(false, "");
-            Dialogs.error("读取 crontab 失败：" + StrUtil.emptyToDefault(e.getMessage(), e.getClass().getSimpleName()));
-        });
-    }
-
-    private void showCrontabEditor(String target, String content) {
-        String owner = StrUtil.isBlank(target) ? env.getLoginUser() : target;
-        Dialog dialog = new Dialog();
-        dialog.setHeaderTitle("编辑 crontab（用户：" + owner + "）");
-        dialog.setWidth("min(1000px, 94vw)");
-
-        // crontab 每行末尾都是一条 shell 命令，用 shell 语法高亮；
-        // CodeEditor 的 getValue() 永远是最新值，不需要 TextArea 那套 EAGER 失焦竞态规避
-        CodeEditor editor = new CodeEditor(CodeEditor.MODE_SHELL);
-        editor.setValue(StrUtil.emptyToDefault(content, ""));
-        editor.setWidthFull();
-        editor.setHeight("440px");
-
-        Span hint = new Span("每行一条，格式：分 时 日 月 周 命令（如 0 2 * * * /opt/backup.sh）。"
-                + "保存会整体替换用户 " + owner + " 的 crontab，原内容会先备份到目标机（~/crontab.bak-时间戳 或 /tmp/）。"
-                + "清空全部内容保存 = 删除该用户的所有计划任务。");
-        hint.addClassName("view-subtitle");
-        hint.getStyle().set("overflow-wrap", "anywhere");
-
-        VerticalLayout body = new VerticalLayout(editor, hint);
-        body.setPadding(false);
-        body.getStyle().set("gap", "10px");
-        dialog.add(body);
-        dialog.getFooter().add(UiFactory.copyButton(this, content),
-                UiFactory.button("取消", dialog::close),
-                UiFactory.primary("保存", () -> {
-                    String edited = editor.getValue();
-                    log.info("crontab 编辑器保存触发：user={} contentLen={}", owner, edited == null ? -1 : edited.length());
-                    dialog.close();
-                    Dialogs.confirm("保存 crontab",
-                            "将整体替换用户 " + owner + " 在 " + hostLabel() + " 上的 crontab（共 "
-                                    + edited.lines().count() + " 行），原内容会先备份到目标机。确认保存？",
-                            () -> query("保存 crontab", () -> service.crontabSave(target, edited, env)));
-                }));
-        dialog.open();
-    }
-
-    private Component buildHostGroup() {
-        hostnameField.setPlaceholder("新主机名，如 app-node-01");
-        hostnameField.setWidth("240px");
-        return group(section("主机名与网络"),
-                actionRow(
-                        UiFactory.rowAction("主机名 / 网卡 / 路由", () -> query("主机与网络信息", () -> service.hostInfo())),
-                        new Span("新主机名"), hostnameField,
-                        privileged("修改主机名", this::confirmSetHostname)));
-    }
-
-    private Component buildDangerGroup() {
-        Span title = new Span("危险操作（执行前先确认目标机是哪一台）");
-        title.addClassName("view-section-title");
-        title.getStyle().set("color", "var(--lumo-error-text-color)");
-        Button selinuxOffTemp = privileged("关闭 SELinux（临时）", () -> confirmSelinux(false, false));
-        Button selinuxOffPerm = privileged("关闭 SELinux（永久，需重启）", () -> confirmSelinux(false, true));
-        Button selinuxOnTemp = privileged("开启 SELinux（临时）", () -> confirmSelinux(true, false));
-        selinuxButtons.add(selinuxOffTemp);
-        selinuxButtons.add(selinuxOffPerm);
-        selinuxButtons.add(selinuxOnTemp);
-        return group(title,
-                actionRow(
-                        selinuxOffTemp,
-                        selinuxOffPerm,
-                        selinuxOnTemp));
     }
 
     // ------------------------------------------------------------------
@@ -604,7 +599,7 @@ public class LinuxOpsView extends ViewBase {
         promptUserName(action,
                 "目标机上 sudo 权限挂在 " + group + " 组上，"
                         + (grant ? "加进去之后该账号重新登录即可 sudo。" : "移出之后该账号失去 sudo 权限。"),
-                grant ? "加入" : "移出", false,
+                grant ? "加入" : "移出",
                 name -> query(action, () -> service.setSudo(name, grant, env)));
     }
 
@@ -616,7 +611,7 @@ public class LinuxOpsView extends ViewBase {
         promptUserName(action,
                 lock ? "锁定后该账号无法登录（家目录与数据保留），适合人员离岗时先停用。"
                         : "解锁后账号恢复登录。",
-                lock ? "锁定" : "解锁", false,
+                lock ? "锁定" : "解锁",
                 name -> query(action, () -> service.setUserLocked(name, lock, env)));
     }
 
@@ -650,7 +645,7 @@ public class LinuxOpsView extends ViewBase {
     }
 
     /** 单输入框（用户名）的通用弹窗 */
-    private void promptUserName(String title, String hint, String confirmText, boolean danger, Consumer<String> action) {
+    private void promptUserName(String title, String hint, String confirmText, Consumer<String> action) {
         Dialog dialog = new Dialog();
         dialog.setHeaderTitle(title);
         dialog.setWidth("560px");
@@ -663,14 +658,7 @@ public class LinuxOpsView extends ViewBase {
         body.setPadding(false);
         body.getStyle().set("gap", "10px");
         dialog.add(body);
-
-        Button confirm = new Button(confirmText);
-        if (danger) {
-            confirm.addThemeVariants(ButtonVariant.LUMO_PRIMARY, ButtonVariant.LUMO_ERROR);
-        } else {
-            confirm.addThemeVariants(ButtonVariant.LUMO_PRIMARY);
-        }
-        confirm.addClickListener(e -> {
+        dialog.getFooter().add(UiFactory.button("取消", dialog::close), UiFactory.primary(confirmText, () -> {
             String name = StrUtil.trimToEmpty(nameField.getValue());
             if (StrUtil.isBlank(name)) {
                 Dialogs.warn("请填写用户名");
@@ -678,8 +666,7 @@ public class LinuxOpsView extends ViewBase {
             }
             dialog.close();
             action.accept(name);
-        });
-        dialog.getFooter().add(UiFactory.button("取消", dialog::close), confirm);
+        }));
         dialog.open();
     }
 
@@ -753,18 +740,78 @@ public class LinuxOpsView extends ViewBase {
                 () -> query("修改主机名", () -> service.setHostname(name, env)));
     }
 
-    private void confirmSelinux(boolean enabled, boolean permanent) {
+    // ------------------------------------------------------------------
+    // crontab 在线编辑
+    // ------------------------------------------------------------------
+
+    /**
+     * crontab 在线编辑：先取原文预填，保存时整体替换。
+     * 改自己的 crontab 不需要任何提权；改别人的（比如 root 的）由 {@link #privileged} 统一管权限。
+     */
+    private void openCrontabEditor() {
         if (!checkEnv()) {
             return;
         }
-        String what = (enabled ? "开启" : "关闭") + "SELinux" + (permanent ? "（永久）" : "（临时）");
-        String message = permanent
-                ? "将把 /etc/selinux/config 里的 SELINUX 改为 " + (enabled ? "enforcing" : "disabled")
-                + "，重启后生效。关闭 SELinux 会降低主机安全性，排查权限问题时更推荐「临时关闭」。"
-                : "将执行 setenforce " + (enabled ? "1" : "0") + "，立即生效，重启后恢复配置文件里的设置。";
-        Dialogs.confirmDanger(what,
-                message + "\n\n目标机：" + env.getHostname() + "（" + env.getOsRelease() + "）",
-                what, () -> query(what, () -> service.setSelinux(enabled, permanent, env)));
+        String target = cronTarget();
+        boolean self = StrUtil.isBlank(target) || target.equals(env.getLoginUser());
+        if (!self && !ensurePrivilege("编辑用户 " + target + " 的 crontab")) {
+            return;
+        }
+        setBusy(true, "正在读取 crontab …");
+        runAsync("读取 crontab", () -> service.crontabRead(target, env), content -> {
+            setBusy(false, "");
+            showCrontabEditor(target, String.valueOf(content));
+        }, e -> {
+            setBusy(false, "");
+            Dialogs.error("读取 crontab 失败：" + StrUtil.emptyToDefault(e.getMessage(), e.getClass().getSimpleName()));
+        });
+    }
+
+    private void showCrontabEditor(String target, String content) {
+        String owner = StrUtil.isBlank(target) ? env.getLoginUser() : target;
+        Dialog dialog = new Dialog();
+        dialog.setHeaderTitle("编辑 crontab（用户：" + owner + "）");
+        dialog.setWidth("min(1000px, 94vw)");
+
+        // crontab 每行末尾都是一条 shell 命令，用 shell 语法高亮；
+        // CodeEditor 的 getValue() 永远是最新值，不需要 TextArea 那套 EAGER 失焦竞态规避
+        CodeEditor editor = new CodeEditor(CodeEditor.MODE_SHELL);
+        editor.setValue(StrUtil.emptyToDefault(content, ""));
+        editor.setWidthFull();
+        editor.setHeight("440px");
+
+        Span hint = new Span("每行一条，格式：分 时 日 月 周 命令（如 0 2 * * * /opt/backup.sh）。"
+                + "保存会整体替换用户 " + owner + " 的 crontab，原内容会先备份到目标机（~/crontab.bak-时间戳 或 /tmp/）。"
+                + "清空全部内容保存 = 删除该用户的所有计划任务。");
+        hint.addClassName("view-subtitle");
+        hint.getStyle().set("overflow-wrap", "anywhere");
+
+        VerticalLayout body = new VerticalLayout(editor, hint);
+        body.setPadding(false);
+        body.getStyle().set("gap", "10px");
+        dialog.add(body);
+        dialog.getFooter().add(
+                // 复制的是编辑器里的当前内容（用户在弹窗里改过之后，复制出去的就是改过的版本）
+                UiFactory.button("复制", () -> {
+                    String current = editor.getValue();
+                    if (StrUtil.isBlank(current)) {
+                        Dialogs.warn("编辑器是空的，没有内容可复制");
+                        return;
+                    }
+                    UiFactory.copyToClipboard(this, current);
+                    Dialogs.success("已复制到剪贴板");
+                }),
+                UiFactory.button("取消", dialog::close),
+                UiFactory.primary("保存", () -> {
+                    String edited = editor.getValue();
+                    log.info("crontab 编辑器保存触发：user={} contentLen={}", owner, edited == null ? -1 : edited.length());
+                    dialog.close();
+                    Dialogs.confirm("保存 crontab",
+                            "将整体替换用户 " + owner + " 在 " + hostLabel() + " 上的 crontab（共 "
+                                    + edited.lines().count() + " 行），原内容会先备份到目标机。确认保存？",
+                            () -> query("保存 crontab", () -> service.crontabSave(target, edited, env)));
+                }));
+        dialog.open();
     }
 
     // ------------------------------------------------------------------
@@ -857,6 +904,10 @@ public class LinuxOpsView extends ViewBase {
     private void runAsync(String label, ThrowingSupplier task, Consumer<Object> onDone, Consumer<Exception> onFailure) {
         UI ui = getUI().orElse(null);
         if (ui == null) {
+            // 视图已经不在 UI 上（未 attach 或已 detach）：任务跑不了。
+            // 必须把 busy 状态收回来，否则「正在连接 …」会一直挂着、连接按钮永远是灰的。
+            log.warn("{} 无法执行：视图当前不在 UI 上", label);
+            setBusy(false, "");
             return;
         }
         Thread thread = new Thread(() -> {

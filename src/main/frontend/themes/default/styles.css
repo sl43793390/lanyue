@@ -137,6 +137,73 @@ body {
     padding-right: 0;
 }
 
+/* ------------------------------------------------------------
+   登录卡片现代化：卡片加宽、圆角、投影；输入框与按钮统一 8px 圆角。
+   两层 DOM 要分清：
+   ① vaadin-login-form 没有 shadowRoot（模板挂在 light DOM，为了密码
+      管理器能读到表单值），所以 vaadin-login-form-wrapper 这个元素本身
+      就能被文档级选择器直接命中；
+   ② 输入框的 [part=input-field] 在 vaadin-text-field 自己的 shadow 里，
+      圆角只能用 CSS 自定义属性 --vaadin-input-field-border-radius 透传
+      （input-container 的 :host 读它，见 @vaadin/input-container lumo 样式）。
+   ------------------------------------------------------------ */
+
+/* 卡片 320px → 416px（26rem）。字段会跟着宽（280px → 约 374px）：
+   组件自带的文档级 <style>（vaadin-login-form-wrapper > form > * { width: 100% }）
+   让字段撑满表单，按钮则在 wrapper 的 flex 布局里被 stretch。
+   <p>
+   宽度必须落在 vaadin-login-form 上，不能落在 wrapper 上：
+   .login-panel 是 align-items:center 的纵向 flex，vaadin-login-form 作为
+   flex 子项宽度是 fit-content（不确定值），wrapper 里字段又是 width:100%，
+   百分比撞上不确定的包含块会被当成 auto——直接给 wrapper 写 26rem 或
+   min(26rem,100%) 都会让整条链缩回内容宽（实测 210px，2026-10-18 踩坑）。
+   在最上游给确定宽度、wrapper 再 width:100% 跟上，链路才确定。
+   <p>
+   max-width: calc(100% - 32px) 是窄屏保险：≤1000px 时品牌区收起、
+   面板吃全宽，375px 手机上也不会横向溢出（实测 card 343px 无溢出）。 */
+.login-view vaadin-login-form {
+    width: 26rem;
+    max-width: calc(100% - 32px);
+}
+
+.login-view vaadin-login-form-wrapper {
+    width: 100%;
+    /* shadow 里 :host 有 max-width: calc(--lumo-size-m * 10)（=400px），
+       会压住 416px；文档级 normal 声明层叠胜出 :host，显式放开上限 */
+    max-width: none;
+    box-sizing: border-box;
+    border-radius: 12px;
+    border: 1px solid var(--lumo-contrast-10pct);
+    box-shadow: var(--lumo-box-shadow-l);
+}
+
+/* 表单改纵向 flex、字段间留 8px 呼吸位（原来用户名/密码两个字段是贴边的）。
+   form 是 wrapper 的 light-DOM 子元素，文档级样式可以直接命中；
+   隐藏的 csrf input 不参与 flex 布局。 */
+.login-view vaadin-login-form-wrapper form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--lumo-space-s);
+}
+
+/* 输入框圆角 3.5px → 8px。宽度不用单独管：组件自带的文档级 <style>
+   （vaadin-login-form-wrapper > form > * { width: 100% }）已让字段
+   撑满表单，卡片加宽后字段自然跟着宽（280px → 约 376px）。 */
+.login-view vaadin-text-field,
+.login-view vaadin-password-field {
+    --vaadin-input-field-border-radius: 8px;
+}
+
+/* 登录按钮同圆角，与输入框保持一致 */
+.login-view vaadin-login-form vaadin-button[slot="submit"] {
+    --vaadin-button-border-radius: 8px;
+}
+
+/* 错误提示框同圆角（part 在 wrapper 的 shadow 里，用 ::part 穿一层） */
+.login-view vaadin-login-form-wrapper::part(error-message) {
+    border-radius: 8px;
+}
+
 /* ==========================================================
    主框架：顶栏 + 菜单 + 多标签内容区
    ========================================================== */
@@ -163,6 +230,14 @@ body {
     letter-spacing: 1px;
     white-space: nowrap;
     color: var(--lumo-header-text-color);
+}
+
+/* 顶栏标题左侧的站点图标（favicon.ico）：固定 28px，与标题文字同一行居中 */
+.main-header-logo-icon {
+    width: 28px;
+    height: 28px;
+    margin-right: 10px;
+    flex-shrink: 0;
 }
 
 .main-header-spacer {
@@ -1654,4 +1729,219 @@ vaadin-grid::part(odd-row-cell) {
     color: var(--lumo-primary-text-color);
     font-weight: 600;
     flex-shrink: 0;
+}
+
+/* ==================================================================
+ * 常用 Linux 命令（Linux工具 → 常用Linux命令）
+ * 连接卡片（通栏）+ 分组操作卡片网格。卡片外壳全部走这里，
+ * Java 侧只搭组件树、不内联算 flex——内联样式一多，改一处漏一处。
+ * ================================================================== */
+
+/* 连接卡片：通栏，比操作卡高一级的视觉权重 */
+.ops-connect-card {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 14px 18px;
+    background-color: var(--lumo-base-color);
+    border: 1px solid var(--lumo-contrast-15pct);
+    border-radius: var(--lumo-border-radius-l);
+    box-shadow: 0 1px 2px rgba(31, 41, 55, 0.05);
+}
+
+.ops-connect-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+}
+
+.ops-connect-title {
+    font-size: var(--lumo-font-size-m);
+    font-weight: 600;
+    color: var(--lumo-header-text-color);
+}
+
+/* 选机器 + 连接按钮 + 瞬态状态，一行放下；窄了自然换行 */
+.ops-connect-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+}
+
+/* 按钮旁的瞬态状态（正在连接 / 正在执行 …） */
+.ops-busy {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-primary-text-color);
+}
+
+/* 环境信息条：浅蓝底 + 信息图标，连接成功后填充目标机环境摘要 */
+.ops-env-bar {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-top: 12px;
+    padding: 8px 12px;
+    background-color: var(--lumo-primary-color-10pct);
+    border-radius: var(--lumo-border-radius-m);
+}
+
+.ops-env-bar vaadin-icon {
+    flex: 0 0 auto;
+    margin-top: 3px;
+    color: var(--lumo-primary-text-color);
+}
+
+.ops-env-bar .docker-env-label {
+    margin: 0;
+    line-height: var(--lumo-line-height-m);
+}
+
+/* 操作区卡片网格：两列自适应，窄屏单列。
+   百分比/固定 basis 而不是 flex-grow+basis:0——basis 为 0 且 min-content>0 时
+   Chrome 会把 flex 因子当 0 处理，比例必失真（styles.css 顶部有同样的坑）。 */
+.ops-area {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 16px;
+    width: 100%;
+}
+
+.ops-card {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 460px;
+    min-width: 420px;
+    max-width: 680px;
+    padding: 12px 16px 14px;
+    background-color: var(--lumo-base-color);
+    border: 1px solid var(--lumo-contrast-15pct);
+    border-radius: var(--lumo-border-radius-l);
+    box-shadow: 0 1px 2px rgba(31, 41, 55, 0.05);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ops-card:hover {
+    border-color: rgba(37, 99, 235, 0.35);
+    box-shadow: 0 2px 6px rgba(31, 41, 55, 0.08);
+}
+
+.ops-card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+    border-bottom: 1px solid var(--lumo-contrast-5pct);
+}
+
+/* 卡头圆形图标：浅色底 + 同色系深色图标（light theme） */
+.ops-card-icon {
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    width: 30px;
+    height: 30px;
+    padding: 5px;
+    border-radius: 50%;
+}
+
+.ops-icon-blue {
+    background-color: #e3ebfb;
+    color: #17408b;
+}
+
+.ops-icon-green {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.ops-icon-purple {
+    background-color: #ede9fe;
+    color: #5b21b6;
+}
+
+.ops-icon-orange {
+    background-color: #fef3c7;
+    color: #92400e;
+}
+
+.ops-icon-teal {
+    background-color: #ccfbf1;
+    color: #115e59;
+}
+
+.ops-icon-red {
+    background-color: #fee2e2;
+    color: #991b1b;
+}
+
+.ops-card-title {
+    font-size: var(--lumo-font-size-m);
+    font-weight: 600;
+    color: var(--lumo-header-text-color);
+}
+
+/* 卡头右侧元信息（防火墙类型与运行状态），推到最右 */
+.ops-card-meta {
+    margin-left: auto;
+    font-size: var(--lumo-font-size-xs);
+    color: var(--lumo-secondary-text-color);
+    text-align: right;
+}
+
+.ops-card-body {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* 卡片内的按钮行：紧凑间距 + flex 换行。
+   浅色底走文档 host 样式（优先级高于组件内 :host 规则），
+   与表格的 .row-actions 同一套手法，但间距是 8px 而不是 28px——
+   .row-actions 的 28px 是给表格行内按钮点不错手用的，页面按钮不需要那么疏。 */
+.ops-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.ops-row vaadin-button {
+    background-color: var(--lumo-contrast-5pct);
+    border-radius: var(--lumo-border-radius-s);
+    transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.ops-row vaadin-button:not([disabled]):hover {
+    background-color: var(--lumo-contrast-10pct);
+}
+
+.ops-row vaadin-button[theme~="error"] {
+    background-color: var(--lumo-error-color-10pct);
+    color: var(--lumo-error-text-color);
+}
+
+.ops-row vaadin-button[theme~="error"]:not([disabled]):hover {
+    background-color: var(--lumo-error-color-20pct);
+}
+
+/* 置灰钮保持原色：Lumo 默认把禁用钮压到半透明，浅色底会发闷 */
+.ops-row vaadin-button[disabled] {
+    opacity: 1;
+}
+
+/* 未连接引导卡：单独占一行 */
+.ops-empty-card {
+    flex: 1 1 100%;
+    max-width: none;
+    align-items: flex-start;
+    gap: 4px;
+}
+
+.ops-empty-desc {
+    font-size: var(--lumo-font-size-s);
+    color: var(--lumo-secondary-text-color);
+    line-height: var(--lumo-line-height-m);
 }

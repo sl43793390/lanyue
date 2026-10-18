@@ -124,11 +124,6 @@ public class LinuxEnv implements Serializable {
         return isRoot() || sudoAvailable;
     }
 
-    /** 探测到了 SELinux（getenforce 存在）。Ubuntu / Debian 默认不带，这类机器上 SELinux 相关按钮应该置灰 */
-    public boolean hasSelinux() {
-        return StrUtil.isNotBlank(selinux);
-    }
-
     /**
      * 发行版家族：RHEL 系（centos / rocky / rhel / almalinux / ol / fedora 及国产衍生）
      * 还是 Debian 系（debian / ubuntu / uos / deepin）。

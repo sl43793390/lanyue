@@ -11,6 +11,7 @@ import com.vaadin.flow.component.button.ButtonVariant;
 import com.vaadin.flow.component.contextmenu.MenuItem;
 import com.vaadin.flow.component.html.Div;
 import com.vaadin.flow.component.html.H1;
+import com.vaadin.flow.component.html.Image;
 import com.vaadin.flow.component.html.Span;
 import com.vaadin.flow.component.menubar.MenuBar;
 import com.vaadin.flow.component.notification.Notification;
@@ -23,6 +24,7 @@ import com.vaadin.flow.router.PageTitle;
 import com.vaadin.flow.router.PreserveOnRefresh;
 import com.vaadin.flow.router.Route;
 import com.vaadin.flow.server.VaadinSession;
+import com.vaadin.flow.server.streams.DownloadHandler;
 import com.vaadin.flow.spring.security.AuthenticationContext;
 import jakarta.annotation.security.PermitAll;
 import org.springframework.context.ApplicationContext;
@@ -121,7 +123,7 @@ public class MainView extends VerticalLayout implements TabHost {
     // 顶部两行：标题 / 用户信息 + 深蓝菜单行
     // ------------------------------------------------------------------
 
-    /** 第一行：左侧平台标题，右侧用户名与退出按钮。 */
+    /** 第一行：左侧平台标题（带站点图标），右侧用户名与退出按钮。 */
     private Component buildTopBar() {
         HorizontalLayout topBar = new HorizontalLayout();
         topBar.addClassName("main-topbar");
@@ -130,13 +132,31 @@ public class MainView extends VerticalLayout implements TabHost {
         H1 logo = new H1("揽月运维管理平台");
         logo.addClassName("main-header-logo");
 
+        Image logoIcon = new Image(logoIconHandler(), "揽月运维管理平台");
+        logoIcon.addClassName("main-header-logo-icon");
+
         Div spacer = new Div();
         spacer.addClassName("main-header-spacer");
 
-        topBar.add(logo, spacer, buildUserArea());
-        // 只有中间的 spacer 参与伸缩，logo 与用户区保持原宽
+        topBar.add(logoIcon, logo, spacer, buildUserArea());
+        // 只有中间的 spacer 参与伸缩，图标、logo 与用户区保持原宽
         topBar.setFlexGrow(1, spacer);
         return topBar;
+    }
+
+    /**
+     * 顶栏标题左侧的站点图标，直接复用 classpath 里的 {@code favicon.ico}。
+     * <p>
+     * 之所以走 {@link DownloadHandler} 而不是相对路径：主页 URL 是 {@code /log}
+     * （无尾斜杠），浏览器会把相对地址 {@code favicon.ico} 解析到
+     * {@code /favicon.ico}，落在 context-path 之外必然 404。
+     * <p>
+     * 第三个参数是**文件名**（会出现在资源 URL 里，并按扩展名推 content type），
+     * 不能传 mime——URL 路径里带斜杠会被 Tomcat 当非法编码直接 400。
+     */
+    private static DownloadHandler logoIconHandler() {
+        return DownloadHandler.forClassResource(MainView.class,
+                "/META-INF/resources/favicon.ico", "favicon.ico");
     }
 
     /** 第二行：一整行深蓝底的菜单。 */

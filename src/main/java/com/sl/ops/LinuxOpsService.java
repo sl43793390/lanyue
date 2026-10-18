@@ -623,32 +623,6 @@ public class LinuxOpsService {
                 """);
     }
 
-    /**
-     * 关闭 / 打开 SELinux。
-     *
-     * @param permanent false 只改运行时（setenforce，立即生效、重启后复原）；
-     *                  true 改 /etc/selinux/config（重启后生效）
-     */
-    public String setSelinux(boolean enabled, boolean permanent, LinuxEnv env) throws IOException {
-        if (!env.hasSelinux()) {
-            throw new IOException("目标机没有 SELinux（getenforce 不存在，Ubuntu / Debian 等发行版默认不带），无需此操作");
-        }
-        String prefix = rootPrefix(env, "修改 SELinux");
-        StringBuilder script = new StringBuilder();
-        if (!permanent) {
-            script.append(prefix).append("setenforce ").append(enabled ? "1" : "0").append(" 2>&1\n");
-        } else {
-            script.append(prefix).append("sed -i 's/^SELINUX=.*/SELINUX=")
-                    .append(enabled ? "enforcing" : "disabled").append("/' /etc/selinux/config 2>&1\n")
-                    .append("echo 配置文件已改为 SELINUX=").append(enabled ? "enforcing" : "disabled")
-                    .append("，需要重启才生效\n")
-                    .append("grep -E '^[[:space:]]*SELINUX' /etc/selinux/config 2>/dev/null\n");
-        }
-        script.append("\n-- 操作后状态 --\n")
-                .append("(command -v getenforce >/dev/null 2>&1 && echo \"运行时：$(getenforce)\") || echo '没有 SELinux'\n");
-        return runEchoing(script.toString());
-    }
-
     /** 主机名、网卡地址、默认路由、/etc/hosts */
     public String hostInfo() throws IOException {
         return run("""
