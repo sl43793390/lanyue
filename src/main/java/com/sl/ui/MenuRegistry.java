@@ -14,6 +14,7 @@ import com.sl.ui.tool.Base64CodecView;
 import com.sl.ui.tool.CronGeneratorView;
 import com.sl.ui.tool.EncryptionView;
 import com.sl.ui.tool.FlowchartView;
+import com.sl.ui.tool.GithubFavoriteView;
 import com.sl.ui.tool.ImageCompressView;
 import com.sl.ui.tool.ImageConverterView;
 import com.sl.ui.tool.JsonBeautifyView;
@@ -23,6 +24,7 @@ import com.sl.ui.tool.QrCodeView;
 import com.sl.ui.tool.RegexTestView;
 import com.sl.ui.tool.ScriptMgmtView;
 import com.sl.ui.tool.ScriptMonitorView;
+import com.sl.ui.tool.TextDiffView;
 import com.sl.util.Constants;
 import com.vaadin.flow.component.Component;
 
@@ -66,7 +68,8 @@ public final class MenuRegistry {
     }
 
     /**
-     * 完整菜单。顺序与旧项目一致：本地 → 远程 → Docker → 安全 → 工具 → 用户。
+     * 完整菜单。顺序与旧项目一致：本地 → 远程 → Docker → drawio → Linux工具 → 其他工具，
+     * 其后追加「github优选」（开源项目收藏夹）与「用户管理」。
      */
     public static final List<Group> GROUPS = List.of(
             new Group("概览", List.of(
@@ -104,7 +107,11 @@ public final class MenuRegistry {
                     new Item("正则表达式测试", RegexTestView.class, null),
                     new Item("Cron表达式生成器", CronGeneratorView.class, null),
                     new Item("图片压缩", ImageCompressView.class, null),
-                    new Item("图片转换", ImageConverterView.class, null))),
+                    new Item("图片转换", ImageConverterView.class, null),
+                    new Item("文本对比", TextDiffView.class, null))),
+
+            new Group("github优选", List.of(
+                    new Item("github优选", GithubFavoriteView.class, Constants.UPDATE))),
 
             new Group("用户管理", List.of(
                     new Item("用户管理", UserManagementView.class, Constants.ADD))));
