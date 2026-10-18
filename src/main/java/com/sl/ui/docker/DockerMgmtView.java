@@ -1004,6 +1004,9 @@ public class DockerMgmtView extends ViewBase {
         imageCombo.setItems(existingImageRefs());
         // 仓库里没有列出的镜像（刚 docker load 进来还没刷新列表）也允许手输
         imageCombo.setAllowCustomValue(true);
+        // 只 setAllowCustomValue 不够：不挂 listener 手输的镜像名不会写进 value，
+        // 点「复制镜像名」时会误报「请先选择镜像」
+        imageCombo.addCustomValueSetListener(e -> imageCombo.setValue(e.getDetail()));
         imageCombo.setPlaceholder("选择或输入镜像名，如 nginx:1.25");
         imageCombo.setWidth("500px");
         Button copyBtn = UiFactory.button("复制镜像名", () -> {

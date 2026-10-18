@@ -9,6 +9,7 @@ import com.sl.util.Constants;
 import com.sl.util.SSHClientUtil;
 import com.sl.util.SshConnectionPool;
 import com.vaadin.flow.component.AttachEvent;
+import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.charts.Chart;
@@ -41,7 +42,9 @@ import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 
 import java.io.IOException;
+import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Pattern;
 
 /**
  * 远程指标监控：CPU / 内存 / 磁盘 三张卡片，5 秒一轮自动刷新。
@@ -60,6 +63,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * </ul>
  * 进程 TOP 10 支持「按 CPU / 按内存」一键切换排序：默认 top 批模式就是 CPU 序，
  * 内存序在服务端对最近一次采样的解析结果重排，不增加 SSH 采集次数。
+ * 进程表最后一列有「结束进程」按钮：先 SIGTERM 后 SIGKILL，命令按目标机环境
+ * （{@code /etc/os-release} 探测：CentOS 7 / Rocky 8/9 / Ubuntu 22）选择提权方式，
+ * 详见 {@link #doKill(String)}。
  * 刷新线程是页面私有的守护线程，detach 时置停止位退出——不占公共线程池，
  * 也不留「页面关了还在跑」的僵尸循环。
  */
@@ -143,6 +149,7 @@ public class RemoteMonitorView extends ViewBase {
         procGrid.addColumn(r -> String.format("%.1f%%", r.cpu())).setHeader("CPU").setAutoWidth(true);
         procGrid.addColumn(r -> String.format("%.1f%%", r.mem())).setHeader("内存").setAutoWidth(true);
         procGrid.addColumn(ProcRow::command).setHeader("命令").setAutoWidth(true).setFlexGrow(1);
+        procGrid.addComponentColumn(this::procActionsCell).setHeader("操作").setAutoWidth(true);
         add(procGrid);
 
         startRefreshLoop();
@@ -271,6 +278,211 @@ public class RemoteMonitorView extends ViewBase {
         Sample s = lastSample;
         if (s != null && s.error == null) {
             procGrid.setItems(sortedProcs(s));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 结束进程（进程表「操作」列）
+    // ------------------------------------------------------------------
+
+    /**
+     * PID 白名单：top 解析出的第一列理论上就是数字，拼进远端 shell 命令前再拦一遍——
+     * 页面上的任何字符串最终都会变成远端的一条命令，不校验就等于开注入口子。
+     */
+    private static final Pattern PID_PATTERN = Pattern.compile("\\d{1,10}");
+
+    /**
+     * 结束进程前的环境探测（只探一次，结果缓存在 {@link #killEnv}）。
+     * <p>
+     * 为什么结束进程也要探测：{@code kill -15/-9} 这个信号本身在 CentOS 7 / Rocky 8/9 /
+     * Ubuntu 22 上完全一致（procps + POSIX 信号，没有语法分歧），真正的差异在<b>权限</b>——
+     * 杀别人名下的进程要 root。root 直杀；非 root 有免密 sudo 走 {@code sudo -n}
+     * （{@code -n} 不交互，没有 NOPASSWD 配置时立刻失败，而不是挂在密码提示上把
+     * SSH 通道堵死）；两者都没有就只能杀自己名下的进程，失败时远端会把
+     * {@code Operation not permitted} 原样带出来，页面再补一句改用 root 的提示。
+     */
+    private static final String KILL_ENV_SCRIPT = """
+            set +e
+            . /etc/os-release 2>/dev/null
+            echo "KILLENV_ID=${ID:-}"
+            echo "KILLENV_VER=${VERSION_ID:-}"
+            echo "KILLENV_UID=$(id -u)"
+            echo "KILLENV_SUDO=$(sudo -n true >/dev/null 2>&1 && echo yes || echo no)"
+            """;
+
+    /** 探测结果缓存。volatile：刷新线程写、结束进程的后台线程读。 */
+    private volatile KillEnv killEnv;
+
+    /** 进程表操作列：一颗红色「结束进程」。 */
+    private Component procActionsCell(ProcRow row) {
+        HorizontalLayout actions = new HorizontalLayout();
+        actions.setSpacing(false);
+        actions.addClassName("row-actions");
+        actions.setAlignItems(FlexComponent.Alignment.CENTER);
+        actions.add(UiFactory.rowDanger("结束进程", () -> confirmKill(row)));
+        return actions;
+    }
+
+    /** 二次确认：把 PID、用户、命令原文摆出来，避免点错行；信号策略也一并说明。 */
+    private void confirmKill(ProcRow row) {
+        String pid = StrUtil.trimToEmpty(row.pid());
+        if (!PID_PATTERN.matcher(pid).matches()) {
+            Dialogs.warn("PID 不合法，已取消结束进程");
+            return;
+        }
+        Dialogs.confirmDanger("结束进程",
+                "确认结束进程 PID " + pid + " 吗？\n"
+                        + "用户：" + row.user() + "\n命令：" + row.command() + "\n\n"
+                        + "将先发送 SIGTERM 尝试优雅退出，3 秒内未退出再发送 SIGKILL 强制结束。",
+                "结束进程", () -> killAsync(pid));
+    }
+
+    /** 后台线程执行结束流程，结果回 UI 线程提示。SSH 命令可能阻塞数秒，不能占请求线程。 */
+    private void killAsync(String pid) {
+        getUI().ifPresent(ui -> new Thread(() -> {
+            try {
+                String result = doKill(pid);
+                if (running.get()) {
+                    ui.access(() -> Dialogs.success(result));
+                }
+            } catch (Exception e) {
+                log.warn("结束进程 {} 失败：{}", pid, e.getMessage());
+                if (running.get()) {
+                    ui.access(() -> Dialogs.error("结束进程 " + pid + " 失败：" + e.getMessage()));
+                }
+            }
+        }, "remote-monitor-kill-" + pid).start());
+    }
+
+    /**
+     * 结束进程主流程：SIGTERM 优先（给进程留刷盘、断连接的善后时间），
+     * 超时不退再升级 SIGKILL；每一步都用 {@code ps -p} 复核，不靠 exit code 猜。
+     * <p>
+     * 用 {@link SSHClientUtil#executeCommandMerged} 而不是 {@code executeCommand}：
+     * 后者只读 stdout，{@code Operation not permitted} 这类关键报错全在 stderr 上，
+     * 会演变成"点了没反应也不知道为什么"。
+     */
+    private String doKill(String pid) throws IOException {
+        SSHClientUtil client = ensureSsh();
+        KillEnv env = ensureKillEnv(client);
+        String prefix = killPrefix(env);
+        String sys = "（" + env.label() + (env.root() ? " · root" : " · " + env.loginUserOrUid()) + "）";
+
+        String before = client.executeCommandMerged(prefix + "ps -p " + pid + " -o pid=,user=,stat=");
+        if (StrUtil.isBlank(before)) {
+            return "进程 " + pid + " 已不存在（可能刚自行退出，或本页数据已过期）" + sys;
+        }
+        // stat 列（第 3 列）以 Z 开头才是僵尸；用户名里可能带 Z，不能整行 contains
+        String[] cells = before.trim().split("\\s+");
+        if (cells.length >= 3 && cells[2].startsWith("Z")) {
+            // 僵尸进程收不收割取决于父进程，信号对它无效，说清楚免得反复点了没用
+            return "进程 " + pid + " 已是僵尸进程（Zombie），信号无法清除，需由其父进程回收或重启父进程" + sys;
+        }
+
+        client.executeCommandMerged(prefix + "kill -15 " + pid);
+        if (waitProcessGone(client, pid, 3000)) {
+            return "进程 " + pid + " 已收到 SIGTERM 并退出" + sys;
+        }
+
+        String forceOut = client.executeCommandMerged(prefix + "kill -9 " + pid);
+        if (waitProcessGone(client, pid, 2000)) {
+            return "进程 " + pid + " 未响应 SIGTERM，已发送 SIGKILL 强制结束" + sys;
+        }
+        String hint = forceOut.toLowerCase(Locale.ROOT).contains("not permitted")
+                ? "；当前登录用户无权结束该进程，请改用 root 账号连接该主机"
+                : "";
+        return "已发送 SIGKILL，但进程 " + pid + " 仍在运行" + hint + "：" + StrUtil.trimToEmpty(forceOut);
+    }
+
+    /** 探一次目标机环境（发行版 / 是否 root / 免密 sudo），失败不致命——按未知系统直杀。 */
+    private KillEnv ensureKillEnv(SSHClientUtil client) throws IOException {
+        KillEnv cached = killEnv;
+        if (cached != null) {
+            return cached;
+        }
+        String out = client.executeCommandMerged(KILL_ENV_SCRIPT);
+        String id = null;
+        String ver = null;
+        String uid = null;
+        String sudo = null;
+        for (String line : out.split("\r?\n")) {
+            String t = line.trim();
+            if (!t.startsWith("KILLENV_")) {
+                continue;
+            }
+            int eq = t.indexOf('=');
+            if (eq < 0) {
+                continue;
+            }
+            String key = t.substring("KILLENV_".length(), eq).trim();
+            String val = t.substring(eq + 1).trim();
+            switch (key) {
+                case "ID" -> id = val;
+                case "VER" -> ver = val;
+                case "UID" -> uid = val;
+                case "SUDO" -> sudo = val;
+                default -> {
+                }
+            }
+        }
+        KillEnv env = new KillEnv(id, ver, uid, "0".equals(uid), "yes".equals(sudo));
+        killEnv = env;
+        log.info("结束进程环境探测[{}]：{}", presetHost.getIdHost(), env.label());
+        return env;
+    }
+
+    /**
+     * 提权前缀：root 为空串（直杀）；非 root 有免密 sudo 时 {@code sudo -n }；
+     * 否则空串——只能杀自己名下的进程，权限不够由远端报错带出来。
+     */
+    private static String killPrefix(KillEnv env) {
+        if (env.root()) {
+            return "";
+        }
+        return env.sudoAvailable() ? "sudo -n " : "";
+    }
+
+    /** 进程还在吗：{@code ps -p PID -o pid=} 有输出即活着（exit code 不走 executeCommand 的返回值）。 */
+    private boolean processAlive(SSHClientUtil client, String pid) throws IOException {
+        String out = client.executeCommand("ps -p " + pid + " -o pid= 2>/dev/null");
+        return StrUtil.isNotBlank(StrUtil.trimToEmpty(out));
+    }
+
+    /** 轮询等待进程退出：250ms 一查，到期再做最后一次复核，避免"刚查完就退了"的竞态。 */
+    private boolean waitProcessGone(SSHClientUtil client, String pid, long timeoutMs) throws IOException {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (true) {
+            if (!processAlive(client, pid)) {
+                return true;
+            }
+            if (System.currentTimeMillis() >= deadline) {
+                return false;
+            }
+            try {
+                Thread.sleep(250);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return !processAlive(client, pid); // 被吵醒就再确认一次，不等了
+            }
+        }
+    }
+
+    /** 结束进程用的目标机环境快照（探测一次，缓存复用）。 */
+    private record KillEnv(String distroId, String versionId, String uid, boolean root,
+                           boolean sudoAvailable) {
+
+        /** 展示名：centos 7 / rocky 9 / ubuntu 22.04，探不到就给未知。 */
+        String label() {
+            String id = StrUtil.nullToEmpty(distroId);
+            if (id.isEmpty()) {
+                id = "未知发行版";
+            }
+            String ver = StrUtil.nullToEmpty(versionId);
+            return ver.isEmpty() ? id : id + " " + ver;
+        }
+
+        String loginUserOrUid() {
+            return StrUtil.isBlank(uid) ? "uid=?" : "uid=" + uid;
         }
     }
 

@@ -151,6 +151,24 @@ public class DbInitializer implements ApplicationRunner {
             new String[] {"id_host", "name"});
 
     /**
+     * github优选（其他工具 → github优选）。
+     * 主键 id_github 是创建时的纳秒值（应用生成、IdType.INPUT），单列主键。
+     * project_url 取 500：GitHub 地址含组织/仓库，深链（blob/tree 路径）会更长，
+     * 255 也够用，留一倍余量。cd_category 为空表示未分类，页面归到「未分类」组。
+     * 分类不单独建表：收藏夹量级的数据，分类信息直接存在每一行上，页面临时聚合
+     * （拆分独立表还要管外键与级联清理，对这个量级是负优化）。
+     */
+    private static final TableDef GITHUB_FAVORITE = new TableDef("github_favorite",
+            new Object[][] {
+                    {"id_github", 32, true},
+                    {"project_name", 128, true},
+                    {"project_url", 500, true},
+                    {"project_desc", 1000, false},
+                    {"cd_category", 64, false},
+                    {"create_time", 32, false}},
+            new String[] {"id_github"});
+
+    /**
      * 启动时逐张兜底的全部表，业务表与 demo.sql / demo-mysql8.sql 逐表逐列对应。
      * <p>
      * 改表结构时**三处同步**：这里的定义、demo.sql、demo-mysql8.sql。
@@ -226,7 +244,8 @@ public class DbInitializer implements ApplicationRunner {
             SCRIPT_MGMT,
             DRAWIO_FILE,
             COMPOSE_PROJECT,
-            LINUX_CMD};
+            LINUX_CMD,
+            GITHUB_FAVORITE};
 
     /** 一张表的建表定义：表名、列（{列名, 长度, 是否 NOT NULL}）、主键列。 */
     private static final class TableDef {

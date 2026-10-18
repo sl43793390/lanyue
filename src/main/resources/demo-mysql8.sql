@@ -521,3 +521,53 @@ INSERT IGNORE INTO `linux_cmd` (`cmd_name`, `cmd_category`, `cmd_summary`, `cmd_
 'history | grep systemctl => 找之前敲过的 systemctl 命令
 history 20 => 最近 20 条',
 '多个终端共用一份历史，退出会话时才落盘');
+
+-- ----------------------------
+-- Table structure for github_favorite（github优选，其他工具 → github优选）
+--   id_github     项目 ID，主键，取创建时刻的纳秒值（System.nanoTime()），应用生成
+--   project_name  项目名称（卡片标题）
+--   project_url   GitHub 项目地址，https://github.com/组织/仓库
+--   project_desc  项目介绍（卡片中部，超出三行折叠）
+--   cd_category   分类，为空表示未分类（页面归到「未分类」组，排在最后）。
+--                 分类不单独建表：收藏夹量级的数据，分类信息就存在每一行上，
+--                 页面临时聚合；「分类管理」弹窗可重命名 / 删除分类
+--   create_time   创建时间，字符串列 yyyy-MM-dd HH:mm:ss
+--
+-- 表结构与 DbInitializer.GITHUB_FAVORITE 保持一致，改一处要改两处。
+-- 下面 12 条是演示数据（INSERT IGNORE，可重复执行），页面上按分类分组展示。
+-- ----------------------------
+DROP TABLE IF EXISTS `github_favorite`;
+CREATE TABLE `github_favorite` (
+    `id_github`     VARCHAR(32)  NOT NULL,
+    `project_name`  VARCHAR(128) NOT NULL,
+    `project_url`   VARCHAR(500) NOT NULL,
+    `project_desc`  VARCHAR(1000),
+    `cd_category`   VARCHAR(64),
+    `create_time`   VARCHAR(32),
+    PRIMARY KEY (`id_github`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT IGNORE INTO `github_favorite` (`id_github`, `project_name`, `project_url`, `project_desc`, `cd_category`, `create_time`) VALUES
+('2000000000000000001', 'nginx', 'https://github.com/nginx/nginx', '高性能 HTTP 与反向代理服务器，也可用作邮件代理、TCP/UDP 代理，互联网基础设施里的常青树。', 'DevOps 与监控', NOW());
+INSERT IGNORE INTO `github_favorite` (`id_github`, `project_name`, `project_url`, `project_desc`, `cd_category`, `create_time`) VALUES
+('2000000000000000002', 'Jenkins', 'https://github.com/jenkinsci/jenkins', '开源持续集成与持续交付平台，插件生态最丰富的 CI/CD 工具，Pipeline 即代码。', 'DevOps 与监控', NOW());
+INSERT IGNORE INTO `github_favorite` (`id_github`, `project_name`, `project_url`, `project_desc`, `cd_category`, `create_time`) VALUES
+('2000000000000000003', 'Prometheus', 'https://github.com/prometheus/prometheus', '云原生监控与告警系统，拉取式指标采集，PromQL 查询语言，Kubernetes 生态标配。', 'DevOps 与监控', NOW());
+INSERT IGNORE INTO `github_favorite` (`id_github`, `project_name`, `project_url`, `project_desc`, `cd_category`, `create_time`) VALUES
+('2000000000000000004', 'Grafana', 'https://github.com/grafana/grafana', '指标可视化与仪表盘平台，支持 Prometheus、MySQL、Elasticsearch 等上百种数据源。', 'DevOps 与监控', NOW());
+INSERT IGNORE INTO `github_favorite` (`id_github`, `project_name`, `project_url`, `project_desc`, `cd_category`, `create_time`) VALUES
+('2000000000000000005', 'Redis', 'https://github.com/redis/redis', '内存键值数据库，支持字符串、哈希、列表、集合等结构，最常用的缓存与轻量消息中间件。', '数据库与中间件', NOW());
+INSERT IGNORE INTO `github_favorite` (`id_github`, `project_name`, `project_url`, `project_desc`, `cd_category`, `create_time`) VALUES
+('2000000000000000006', 'MySQL Server', 'https://github.com/mysql/mysql-server', 'MySQL 服务端源码，全球使用最广泛的开源关系型数据库。', '数据库与中间件', NOW());
+INSERT IGNORE INTO `github_favorite` (`id_github`, `project_name`, `project_url`, `project_desc`, `cd_category`, `create_time`) VALUES
+('2000000000000000007', 'Elasticsearch', 'https://github.com/elastic/elasticsearch', '分布式搜索与分析引擎，日志检索与全文搜索场景的事实标准。', '数据库与中间件', NOW());
+INSERT IGNORE INTO `github_favorite` (`id_github`, `project_name`, `project_url`, `project_desc`, `cd_category`, `create_time`) VALUES
+('2000000000000000008', 'Spring Boot', 'https://github.com/spring-projects/spring-boot', 'Java 生态最流行的应用框架，约定优于配置，开箱即用搭建生产级应用。', '开发框架与工具', NOW());
+INSERT IGNORE INTO `github_favorite` (`id_github`, `project_name`, `project_url`, `project_desc`, `cd_category`, `create_time`) VALUES
+('2000000000000000009', 'MyBatis-Plus', 'https://github.com/baomidou/mybatis-plus', 'MyBatis 的增强工具，内置通用 CRUD、分页、条件构造器，少写 SQL 也能干活。', '开发框架与工具', NOW());
+INSERT IGNORE INTO `github_favorite` (`id_github`, `project_name`, `project_url`, `project_desc`, `cd_category`, `create_time`) VALUES
+('2000000000000000010', 'Hutool', 'https://github.com/dromara/hutool', '国产 Java 工具集，覆盖字符串、日期、加解密、HTTP、Excel 等日常开发场景。', '开发框架与工具', NOW());
+INSERT IGNORE INTO `github_favorite` (`id_github`, `project_name`, `project_url`, `project_desc`, `cd_category`, `create_time`) VALUES
+('2000000000000000011', 'Vaadin Flow', 'https://github.com/vaadin/flow', '纯 Java 构建 Web 前端的全栈框架，服务端驱动 UI，本平台的技术底座。', '开发框架与工具', NOW());
+INSERT IGNORE INTO `github_favorite` (`id_github`, `project_name`, `project_url`, `project_desc`, `cd_category`, `create_time`) VALUES
+('2000000000000000012', 'Docker Compose', 'https://github.com/docker/compose', '多容器 Docker 应用的定义与运行工具，一个 YAML 文件起一套服务。', 'DevOps 与监控', NOW());
