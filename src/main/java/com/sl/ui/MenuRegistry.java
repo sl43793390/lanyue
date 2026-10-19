@@ -1,5 +1,6 @@
 package com.sl.ui;
 
+import com.sl.ui.admin.RoleManagementView;
 import com.sl.ui.admin.UserManagementView;
 import com.sl.ui.docker.DockerComposeView;
 import com.sl.ui.docker.DockerMgmtView;
@@ -25,7 +26,7 @@ import com.sl.ui.tool.RegexTestView;
 import com.sl.ui.tool.ScriptMgmtView;
 import com.sl.ui.tool.ScriptMonitorView;
 import com.sl.ui.tool.TextDiffView;
-import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.vaadin.flow.component.Component;
 
 import java.util.List;
@@ -43,6 +44,10 @@ import java.util.List;
  * <p>
  * {@code view == null} 表示该功能还在迁移队列里，菜单上照常显示（让人看得见规划），
  * 点击时明确提示"还在迁移中"，而不是抛 404。
+ * <p>
+ * <b>权限码（{@code permission}）是 RBAC 的依据</b>：每个菜单项必须带一个
+ * {@link PermCodes} 里的菜单级权限码，登录后主框架按当前用户的有效权限过滤菜单，
+ * {@code PermissionCatalog} 也以这里为事实源生成权限树的根节点。
  */
 public final class MenuRegistry {
 
@@ -54,7 +59,7 @@ public final class MenuRegistry {
      *
      * @param title      显示的标题，同时也是标签页去重的键
      * @param view       点击后要打开的组件类；{@code null} 表示尚未迁移
-     * @param permission 需要持有的权限码（见 {@link Constants}）；{@code null} 表示登录即可访问
+     * @param permission 需要持有的权限码（见 {@link PermCodes}）；{@code null} 表示登录即可访问
      */
     public record Item(String title, Class<? extends Component> view, String permission) {
 
@@ -69,58 +74,62 @@ public final class MenuRegistry {
 
     /**
      * 完整菜单。顺序与旧项目一致：本地 → 远程 → Docker → drawio → Linux工具 → 其他工具，
-     * 其后追加「github优选」（开源项目收藏夹）与「用户管理」。
+     * 其后追加「github优选」（开源项目收藏夹）与「用户管理」「角色管理」。
      */
     public static final List<Group> GROUPS = List.of(
             new Group("概览", List.of(
-                    new Item("使用手册", HomeView.class, null))),
+                    new Item("使用手册", HomeView.class, PermCodes.HOME_VIEW))),
 
             new Group("本地应用管理", List.of(
-                    new Item("本地日志搜索", LogSearchView.class, Constants.QUERY),
-                    new Item("本地文件管理", LocalFileMgmtView.class, Constants.QUERY),
-                    new Item("jar项目管理", JarProjectView.class, Constants.UPDATE),
-                    new Item("Tomcat管理", TomcatMgmtView.class, Constants.UPDATE),
-                    new Item("通用项目管理", CommonProjectView.class, Constants.UPDATE))),
+                    new Item("本地日志搜索", LogSearchView.class, PermCodes.LOGSEARCH_VIEW),
+                    new Item("本地文件管理", LocalFileMgmtView.class, PermCodes.FILE_VIEW),
+                    new Item("jar项目管理", JarProjectView.class, PermCodes.JAR_VIEW),
+                    new Item("Tomcat管理", TomcatMgmtView.class, PermCodes.TOMCAT_VIEW),
+                    new Item("通用项目管理", CommonProjectView.class, PermCodes.PROJECT_VIEW))),
 
             new Group("远程应用管理", List.of(
-                    new Item("远程日志搜索", RemoteLogSearchView.class, Constants.QUERY),
-                    new Item("免登录服务器列表", RemoteServerListView.class, Constants.QUERY))),
+                    new Item("远程日志搜索", RemoteLogSearchView.class, PermCodes.RLOGSEARCH_VIEW),
+                    new Item("免登录服务器列表", RemoteServerListView.class, PermCodes.RSERVER_VIEW))),
 
             new Group("Docker管理", List.of(
-                    new Item("容器和镜像管理", DockerMgmtView.class, Constants.UPDATE),
-                    new Item("Docker-Compose管理", DockerComposeView.class, Constants.UPDATE))),
+                    new Item("容器和镜像管理", DockerMgmtView.class, PermCodes.DOCKER_VIEW),
+                    new Item("Docker-Compose管理", DockerComposeView.class, PermCodes.COMPOSE_VIEW))),
 
             new Group("drawio", List.of(
-                    new Item("drawio绘图", FlowchartView.class, null))),
+                    new Item("drawio绘图", FlowchartView.class, PermCodes.DRAWIO_VIEW))),
 
             new Group("Linux工具", List.of(
-                    new Item("常用Linux命令", LinuxOpsView.class, Constants.UPDATE),
-                    new Item("Linux命令查询", LinuxCmdQueryView.class, Constants.QUERY),
-                    new Item("脚本管理", ScriptMgmtView.class, Constants.UPDATE),
-                    new Item("自定义脚本监控", ScriptMonitorView.class, Constants.QUERY))),
+                    new Item("常用Linux命令", LinuxOpsView.class, PermCodes.LINUXOPS_VIEW),
+                    new Item("Linux命令查询", LinuxCmdQueryView.class, PermCodes.LINUXCMD_VIEW),
+                    new Item("脚本管理", ScriptMgmtView.class, PermCodes.SCRIPT_VIEW),
+                    new Item("自定义脚本监控", ScriptMonitorView.class, PermCodes.SCRIPTMON_VIEW))),
 
             new Group("其他工具", List.of(
-                    new Item("JSON美化", JsonBeautifyView.class, null),
-                    new Item("Base64编解码", Base64CodecView.class, null),
-                    new Item("加密工具", EncryptionView.class, null),
-                    new Item("二维码生成", QrCodeView.class, null),
-                    new Item("正则表达式测试", RegexTestView.class, null),
-                    new Item("Cron表达式生成器", CronGeneratorView.class, null),
-                    new Item("图片压缩", ImageCompressView.class, null),
-                    new Item("图片转换", ImageConverterView.class, null),
-                    new Item("文本对比", TextDiffView.class, null))),
+                    new Item("JSON美化", JsonBeautifyView.class, PermCodes.JSON_VIEW),
+                    new Item("Base64编解码", Base64CodecView.class, PermCodes.BASE64_VIEW),
+                    new Item("加密工具", EncryptionView.class, PermCodes.ENCRYPT_VIEW),
+                    new Item("二维码生成", QrCodeView.class, PermCodes.QRCODE_VIEW),
+                    new Item("正则表达式测试", RegexTestView.class, PermCodes.REGEX_VIEW),
+                    new Item("Cron表达式生成器", CronGeneratorView.class, PermCodes.CRON_VIEW),
+                    new Item("图片压缩", ImageCompressView.class, PermCodes.IMGCOMPRESS_VIEW),
+                    new Item("图片转换", ImageConverterView.class, PermCodes.IMGCONVERT_VIEW),
+                    new Item("文本对比", TextDiffView.class, PermCodes.TEXTDIFF_VIEW))),
 
             new Group("github优选", List.of(
-                    new Item("github优选", GithubFavoriteView.class, Constants.UPDATE))),
+                    new Item("github优选", GithubFavoriteView.class, PermCodes.GITHUB_VIEW))),
 
             new Group("用户管理", List.of(
-                    new Item("用户管理", UserManagementView.class, Constants.ADD))));
+                    new Item("用户管理", UserManagementView.class, PermCodes.USER_VIEW))),
+
+            new Group("角色管理", List.of(
+                    new Item("角色管理", RoleManagementView.class, PermCodes.ROLE_VIEW))));
 
     /** 默认打开的第一个标签页 */
     public static Item defaultItem() {
-        return GROUPS.get(0).items().get(0);
+        return GROUPS.getFirst().items().getFirst();
     }
-    public static Item remoteServer(){
+
+    public static Item remoteServer() {
         return GROUPS.get(2).items.get(1);
     }
 }

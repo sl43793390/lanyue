@@ -6,7 +6,7 @@ import com.sl.security.CurrentUser;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
-import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.sl.util.Util;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.Key;
@@ -459,7 +459,7 @@ public class LocalFileMgmtView extends ViewBase {
      * @throws IOException 校验不通过。异常会让本次上传失败并在控件上显示原因
      */
     private File resolveUploadTarget(String dirPath, String rawName) throws IOException {
-        if (!hasPermission(Constants.UPLOAD)) {
+        if (!hasPermission(PermCodes.FILE_UPLOAD)) {
             throw new IOException("权限不足，禁止上传");
         }
         File dir = new File(dirPath);
@@ -552,11 +552,11 @@ public class LocalFileMgmtView extends ViewBase {
     // ------------------------------------------------------------------
 
     private static boolean canUpload() {
-        return hasPermission(Constants.UPLOAD);
+        return hasPermission(PermCodes.FILE_UPLOAD);
     }
 
     private static boolean canDelete() {
-        return hasPermission(Constants.DELETE);
+        return hasPermission(PermCodes.FILE_DELETE);
     }
 
     /**
@@ -565,8 +565,7 @@ public class LocalFileMgmtView extends ViewBase {
      * 那种「炸掉」和这里「拒绝」的差别在于：拒绝是有日志、有提示的。
      */
     private static boolean hasPermission(String code) {
-        User user = CurrentUser.get();
-        return user != null && user.hasPermission(code);
+        return CurrentUser.hasPermission(code);
     }
 
     private static String readOwner(Path path, String fallback) {

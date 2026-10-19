@@ -8,7 +8,7 @@ import com.sl.mapper.GithubFavoriteMapper;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
-import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.combobox.ComboBox;
@@ -113,7 +113,7 @@ public class GithubFavoriteView extends ViewBase {
         });
 
         Button addBtn = UiFactory.button("新增项目", () -> {
-            if (!hasPermission(Constants.ADD)) {
+            if (!hasPermission(PermCodes.GITHUB_ADD)) {
                 Dialogs.warn("权限不足，无法新增项目");
                 return;
             }
@@ -293,7 +293,7 @@ public class GithubFavoriteView extends ViewBase {
         menu.setTarget(dots);
         menu.setOpenOnClick(true);
         menu.addItem("编辑", e -> {
-            if (!hasPermission(Constants.UPDATE)) {
+            if (!hasPermission(PermCodes.GITHUB_UPDATE)) {
                 Dialogs.warn("权限不足，无法编辑项目");
                 return;
             }
@@ -332,7 +332,7 @@ public class GithubFavoriteView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void confirmDelete(GithubFavoriteEntity row) {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.GITHUB_DELETE)) {
             Dialogs.warn("权限不足，无法删除项目");
             return;
         }
@@ -532,7 +532,7 @@ public class GithubFavoriteView extends ViewBase {
 
         /** 重命名：同步改组内所有项目的 cd_category（一条 UPDATE ... WHERE cd_category=old）。 */
         private void renameCategory(String oldName) {
-            if (!hasPermission(Constants.UPDATE)) {
+            if (!hasPermission(PermCodes.GITHUB_UPDATE)) {
                 Dialogs.warn("权限不足，无法重命名分类");
                 return;
             }
@@ -581,7 +581,7 @@ public class GithubFavoriteView extends ViewBase {
          * 收藏夹里的项目是资产，删分类不该连带删项目。
          */
         private void deleteCategory(String category, int count) {
-            if (!hasPermission(Constants.DELETE)) {
+            if (!hasPermission(PermCodes.GITHUB_DELETE)) {
                 Dialogs.warn("权限不足，无法删除分类");
                 return;
             }
@@ -623,7 +623,6 @@ public class GithubFavoriteView extends ViewBase {
     // ------------------------------------------------------------------
 
     private static boolean hasPermission(String code) {
-        com.sl.entity.User user = com.sl.security.CurrentUser.get();
-        return user != null && user.hasPermission(code);
+        return com.sl.security.CurrentUser.hasPermission(code);
     }
 }

@@ -16,7 +16,7 @@ import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
 import com.sl.ui.docker.DockerComposeView;
 import com.sl.ui.docker.DockerMgmtView;
-import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.sl.util.SSHClientUtil;
 import com.sl.util.Util;
 import com.vaadin.flow.component.Component;
@@ -109,10 +109,16 @@ public class RemoteServerListView extends ViewBase {
         filterCombo.setClearButtonVisible(true);
         filterCombo.addValueChangeListener(e -> renderGroups());
 
+        // 写操作按 rserver:add 显隐：只有「查看」权的账号（如演示角色）看得见列表，看不见登记入口
+        Button addMachineBtn = UiFactory.primary("添加机器", this::showAddDialog);
+        addMachineBtn.setVisible(hasPermission(PermCodes.RSERVER_ADD));
+        Button newGroupBtn = UiFactory.button("新建分组", this::showNewGroupDialog);
+        newGroupBtn.setVisible(hasPermission(PermCodes.RSERVER_ADD));
+
         HorizontalLayout bar = toolbar(
                 UiFactory.primary("刷新列表", this::reload),
-                UiFactory.primary("添加机器", this::showAddDialog),
-                UiFactory.button("新建分组", this::showNewGroupDialog),
+                addMachineBtn,
+                newGroupBtn,
                 spacer(),
                 filterCombo,
                 statusLabel);
@@ -333,13 +339,26 @@ public class RemoteServerListView extends ViewBase {
 
         // 行内操作多且文字长，透明底蓝字挤在一起极易点错（用户反馈过）：
         // 统一浅色底 + 8px 间隔，删除保持红色。
+        // 按钮按权限显隐：这些入口通向的页面各有权限码，没有对应权限的不该看见入口，
+        // 否则点进去也是被主框架拦下（见 MainView.openTab 的双保险），白跑一趟。
         Button dockerBtn = UiFactory.button("容器和镜像管理", () -> openDocker(info));
+        dockerBtn.setVisible(hasPermission(PermCodes.DOCKER_VIEW));
         Button composeBtn = UiFactory.button("Compose 管理", () -> openCompose(info));
+        composeBtn.setVisible(hasPermission(PermCodes.COMPOSE_VIEW));
         Button appBtn = UiFactory.button("应用管理", () -> openAppMgmt(info));
+        // 应用管理是复合页（jar / Tomcat / 通用项目 / nginx / MySQL 五个子标签），
+        // 任一子页有权就显示入口，子标签的显隐由 RemoteAppMgmtView 自己按权限过滤
+        appBtn.setVisible(hasPermission(PermCodes.JAR_VIEW) || hasPermission(PermCodes.TOMCAT_VIEW)
+                || hasPermission(PermCodes.PROJECT_VIEW) || hasPermission(PermCodes.NGINX_VIEW)
+                || hasPermission(PermCodes.MYSQL_VIEW));
         Button sshBtn = UiFactory.button("SSH 终端", () -> openSshTerminal(info));
+        sshBtn.setVisible(hasPermission(PermCodes.RSERVER_VIEW));
         Button fileBtn = UiFactory.button("文件管理", () -> openFileMgmt(info));
+        fileBtn.setVisible(hasPermission(PermCodes.RFILE_VIEW));
         Button monitorBtn = UiFactory.rowAction("指标监控", () -> openMonitor(info));
+        monitorBtn.setVisible(hasPermission(PermCodes.RSERVER_VIEW));
         Button moveBtn = UiFactory.rowAction("移动", () -> showMoveDialog(row));
+        moveBtn.setVisible(hasPermission(PermCodes.RSERVER_UPDATE));
 
         HorizontalLayout actions = new HorizontalLayout(dockerBtn, composeBtn, appBtn, sshBtn, fileBtn, monitorBtn, moveBtn);
         actions.setWidth("50%");
@@ -347,7 +366,9 @@ public class RemoteServerListView extends ViewBase {
         actions.setSpacing(false);
         actions.setAlignItems(FlexComponent.Alignment.CENTER);
         if (row.fromDb()) {
-            actions.add(UiFactory.rowDanger("删除", () -> confirmDelete(row)));
+            Button deleteBtn = UiFactory.rowDanger("删除", () -> confirmDelete(row));
+            deleteBtn.setVisible(hasPermission(PermCodes.RSERVER_DELETE));
+            actions.add(deleteBtn);
         }
         return actions;
     }
@@ -447,7 +468,7 @@ public class RemoteServerListView extends ViewBase {
             Dialogs.warn("该机器来自 remoteServerList.conf 配置文件，分组固定为「默认分组」，无法在线移动");
             return;
         }
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.RSERVER_UPDATE)) {
             Dialogs.warn("权限不足，无法移动服务器分组");
             return;
         }
@@ -513,7 +534,7 @@ public class RemoteServerListView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void showNewGroupDialog() {
-        if (!hasPermission(Constants.ADD)) {
+        if (!hasPermission(PermCodes.RSERVER_ADD)) {
             Dialogs.warn("权限不足，无法创建分组");
             return;
         }
@@ -578,7 +599,7 @@ public class RemoteServerListView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void confirmDelete(ServerRow row) {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.RSERVER_DELETE)) {
             Dialogs.warn("权限不足，无法删除服务器记录");
             return;
         }
@@ -607,7 +628,7 @@ public class RemoteServerListView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void showAddDialog() {
-        if (!hasPermission(Constants.ADD)) {
+        if (!hasPermission(PermCodes.RSERVER_ADD)) {
             Dialogs.warn("权限不足，无法添加服务器");
             return;
         }
@@ -755,7 +776,6 @@ public class RemoteServerListView extends ViewBase {
     // ------------------------------------------------------------------
 
     private static boolean hasPermission(String code) {
-        com.sl.entity.User user = com.sl.security.CurrentUser.get();
-        return user != null && user.hasPermission(code);
+        return com.sl.security.CurrentUser.hasPermission(code);
     }
 }

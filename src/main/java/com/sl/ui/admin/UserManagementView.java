@@ -4,12 +4,15 @@ import cn.hutool.core.date.DateUtil;
 import cn.hutool.core.util.RandomUtil;
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.sl.entity.Role;
 import com.sl.entity.User;
 import com.sl.mapper.UserDao;
+import com.sl.service.RbacService;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
 import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.sl.util.Util;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.Component;
@@ -39,6 +42,7 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.regex.Pattern;
@@ -47,16 +51,21 @@ import java.util.regex.Pattern;
  * 用户管理页。
  * <p>
  * 对应旧项目的 {@code com.so.component.UserManagementComponent}：覆盖 {@code users} 表
- * 全部字段——统计卡片、筛选（关键字 / 状态 / 权限 / 排序）、分页表格、行内编辑 /
- * 重置密码 / 禁用启用 / 删除、批量操作、Excel 导出。旧版的「列设置」窗口没有搬：
+ * 全部字段——统计卡片、筛选（关键字 / 状态 / 角色 / 排序）、分页表格、行内编辑 /
+ * 重置密码 / 禁用启用 / 删除、批量操作。旧版的「列设置」窗口没有搬：
  * Grid 列在本分辨率下一屏放得下，为它维护一套列引用映射不划算。
  * <p>
- * 三条与数据一致性有关的约定，从旧代码原样保留，改动时务必留意：
+ * <b>RBAC 之后</b>：本页只负责账号本身与<b>角色分配</b>，「角色拥有哪些权限」在
+ * {@link RoleManagementView} 维护。{@code users.permission} 历史权限列仍然有效，
+ * 作为存量账号（含内置管理员的 {@code ALL}）的兜底，但新账号一律走角色。
+ * <p>
+ * 三条与数据一致性有关的约定，改动时务必留意：
  * <ol>
  * <li>登录认证读的是数据库（{@code UserDao}），没有第二份用户来源。</li>
  * <li>「禁用」和「过期」要真正生效，依赖登录链路里的 {@link User#unavailableReason()} 校验。</li>
  * <li>删除与禁用都带保护：不能操作当前登录账号；内置管理员 {@code admin} 永远不能删除、
- * 禁用或降权；也不能让系统失去最后一个拥有全部权限的启用账号。</li>
+ * 禁用或改角色；也不能让系统失去最后一个管理员账号（{@code ALL} 历史列或
+ * 「系统管理员」角色，二者其一即是）。</li>
  * </ol>
  */
 @Service
@@ -72,7 +81,6 @@ public class UserManagementView extends ViewBase {
     private static final String STATUS_DISABLED = "已禁用";
     private static final String STATUS_EXPIRED = "已过期";
     private static final String STATUS_NEAR_EXPIRE = "7 天内到期";
-    private static final String PERM_ALL = "全部权限";
 
     private static final String SORT_NAME_ASC = "用户名 A→Z";
     private static final String SORT_NAME_DESC = "用户名 Z→A";
@@ -84,6 +92,9 @@ public class UserManagementView extends ViewBase {
     private static final String FLAG_ENABLE_TEXT = "启用";
     private static final String FLAG_DISABLE_TEXT = "禁用";
 
+    /** 角色筛选的「全部」占位值 */
+    private static final String ROLE_ALL = "全部角色";
+
     /** 用户名：字母开头，允许字母数字与 _ . - */
     private static final Pattern PATTERN_USER_ID = Pattern.compile("^[A-Za-z][A-Za-z0-9_.-]{1,49}$");
     private static final Pattern PATTERN_EMAIL = Pattern.compile("^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}$");
@@ -92,11 +103,12 @@ public class UserManagementView extends ViewBase {
     private static final int MIN_PASSWORD_LENGTH = 6;
 
     private final transient UserDao userDao;
+    private final transient RbacService rbacService;
 
     private final Grid<User> userGrid = UiFactory.grid(User.class);
     private final TextField keywordField = UiFactory.textField();
     private final ComboBox<String> statusBox = new ComboBox<>();
-    private final ComboBox<String> permissionBox = new ComboBox<>();
+    private final ComboBox<String> roleBox = new ComboBox<>();
     private final ComboBox<String> sortBox = new ComboBox<>();
 
     private final Span pageInfoLb = new Span("");
@@ -108,14 +120,17 @@ public class UserManagementView extends ViewBase {
     /** 全量数据；筛选、排序、分页都在内存里做，用户量级不大，没必要每次都查库 */
     private List<User> allUsers = new ArrayList<>();
     private List<User> viewUsers = new ArrayList<>();
+    /** 登录名 → 角色名列表，随 allUsers 一起刷新，避免每渲染一行都查库 */
+    private final java.util.Map<String, List<String>> roleNamesByUser = new java.util.HashMap<>();
     private int pageIndex = 0;
     private int pageSize = 10;
 
-    public UserManagementView(UserDao userDao) {
+    public UserManagementView(UserDao userDao, RbacService rbacService) {
         this.userDao = userDao;
+        this.rbacService = rbacService;
 
         add(title("用户管理"));
-        add(subtitle("维护登录账号、权限与有效期"));
+        add(subtitle("维护登录账号、角色与有效期"));
 
         add(buildFilterRow());
 
@@ -152,10 +167,16 @@ public class UserManagementView extends ViewBase {
             refreshView();
         });
 
-        permissionBox.setItems(PERM_ALL, "含新增", "含删除", "含修改", "含查询", "无权限");
-        permissionBox.setValue(PERM_ALL);
-        permissionBox.setWidth("140px");
-        permissionBox.addValueChangeListener(e -> {
+        // 角色筛选项跟着数据库走：全部角色 + 每个角色名
+        List<String> roleItems = new ArrayList<>();
+        roleItems.add(ROLE_ALL);
+        for (Role role : rbacService.allRoles()) {
+            roleItems.add(role.getNameRole());
+        }
+        roleBox.setItems(roleItems);
+        roleBox.setValue(ROLE_ALL);
+        roleBox.setWidth("150px");
+        roleBox.addValueChangeListener(e -> {
             pageIndex = 0;
             refreshView();
         });
@@ -168,7 +189,7 @@ public class UserManagementView extends ViewBase {
 
         Button resetBtn = UiFactory.button("重置筛选", this::resetFilter);
         Button addBtn = UiFactory.primary("新增用户", () -> {
-            if (!hasPermission(Constants.ADD)) {
+            if (!hasPermission(PermCodes.USER_ADD)) {
                 Dialogs.warn("权限不足，无法新增用户");
                 return;
             }
@@ -178,7 +199,7 @@ public class UserManagementView extends ViewBase {
         return toolbar(
                 UiFactory.fieldRow("关键字", "68px", keywordField),
                 UiFactory.fieldRow("状态", "52px", statusBox),
-                UiFactory.fieldRow("权限", "52px", permissionBox),
+                UiFactory.fieldRow("角色", "52px", roleBox),
                 UiFactory.fieldRow("排序", "52px", sortBox),
                 resetBtn, spacer(),  addBtn);
     }
@@ -186,7 +207,7 @@ public class UserManagementView extends ViewBase {
     private void resetFilter() {
         keywordField.setValue("");
         statusBox.setValue(STATUS_ALL);
-        permissionBox.setValue(PERM_ALL);
+        roleBox.setValue(ROLE_ALL);
         sortBox.setValue(SORT_NAME_ASC);
         pageIndex = 0;
         refreshView();
@@ -205,7 +226,7 @@ public class UserManagementView extends ViewBase {
         userGrid.addColumn(User::getOrganization).setHeader("组织").setAutoWidth(true);
         userGrid.addColumn(User::getEmail).setHeader("邮箱").setAutoWidth(true);
         userGrid.addColumn(User::getCdPhone).setHeader("手机").setAutoWidth(true);
-        userGrid.addColumn(User::permissionText).setHeader("权限").setAutoWidth(true);
+        userGrid.addColumn(new ComponentRenderer<>(this::roleCell)).setHeader("角色").setAutoWidth(true);
         userGrid.addColumn(new ComponentRenderer<>(this::statusCell)).setHeader("状态").setAutoWidth(true);
         userGrid.addColumn(u -> u.getCreateTime() == null ? "—" : Util.formatDateTime(u.getCreateTime()))
                 .setHeader("创建时间").setAutoWidth(true);
@@ -238,6 +259,32 @@ public class UserManagementView extends ViewBase {
 
         Div cell = new Div(avatar, new Div(idSpan, nameSpan));
         cell.addClassName("um-user-cell");
+        return cell;
+    }
+
+    /** 角色列：每个角色一枚徽标；未分配角色时给灰色提示（历史权限列仍兜底放行） */
+    private Div roleCell(User user) {
+        Div cell = new Div();
+        cell.addClassName("um-user-cell");
+        cell.getStyle().set("flex-wrap", "wrap");
+        cell.getStyle().set("gap", "4px");
+        List<String> names = roleNamesByUser.get(user.getUserId());
+        if (names == null || names.isEmpty()) {
+            Span none = new Span(user.isAllPermission() ? "全部权限（旧）" : "未分配角色");
+            none.addClassName("home-badge");
+            none.addClassName(user.isAllPermission() ? "home-badge-ok" : "home-badge-disabled");
+            if (user.isAllPermission()) {
+                none.getElement().setAttribute("title", "权限取自历史权限列 ALL，建议改授「系统管理员」角色");
+            }
+            cell.add(none);
+            return cell;
+        }
+        for (String name : names) {
+            Span badge = new Span(name);
+            badge.addClassName("home-badge");
+            badge.addClassName("home-badge-ok");
+            cell.add(badge);
+        }
         return cell;
     }
 
@@ -297,14 +344,14 @@ public class UserManagementView extends ViewBase {
         box.setAlignItems(FlexComponent.Alignment.CENTER);
 
         box.add(UiFactory.small("编辑", () -> {
-            if (!hasPermission(Constants.UPDATE)) {
+            if (!hasPermission(PermCodes.USER_UPDATE)) {
                 Dialogs.warn("权限不足，无法修改用户");
                 return;
             }
             new UserEditDialog(user).open();
         }));
         box.add(UiFactory.small("重置密码", () -> {
-            if (!hasPermission(Constants.UPDATE)) {
+            if (!hasPermission(PermCodes.USER_UPDATE)) {
                 Dialogs.warn("权限不足，无法重置密码");
                 return;
             }
@@ -321,7 +368,7 @@ public class UserManagementView extends ViewBase {
             return box;
         }
         box.add(UiFactory.small(user.isEnabled() ? "禁用" : "启用", () -> {
-            if (!hasPermission(Constants.UPDATE)) {
+            if (!hasPermission(PermCodes.USER_UPDATE)) {
                 Dialogs.warn("权限不足，无法修改用户状态");
                 return;
             }
@@ -359,7 +406,7 @@ public class UserManagementView extends ViewBase {
         Button batchEnableBtn = UiFactory.button("批量启用", () -> batchToggle(true));
         Button batchDisableBtn = UiFactory.button("批量禁用", () -> batchToggle(false));
         Button batchDeleteBtn = UiFactory.danger("批量删除", () -> {
-            if (!hasPermission(Constants.DELETE)) {
+            if (!hasPermission(PermCodes.USER_DELETE)) {
                 Dialogs.warn("权限不足，无法删除用户");
                 return;
             }
@@ -394,10 +441,28 @@ public class UserManagementView extends ViewBase {
     // 数据加载与渲染
     // ==================================================================
 
-    /** 重新从数据库读取全量用户 */
+    /** 重新从数据库读取全量用户，并同步刷新「登录名 → 角色名」映射 */
     private void reloadData() {
         List<User> loaded = userDao.selectList(new QueryWrapper<>());
         allUsers = loaded == null ? new ArrayList<>() : loaded;
+        // 一次性查完全部用户的角色名，避免每渲染一行都查库；
+        // Map 里查不到登录名时按「未分配角色」展示，见 roleCell
+        roleNamesByUser.clear();
+        List<Role> roles = rbacService.allRoles();
+        java.util.Map<String, String> roleNameById = new java.util.HashMap<>();
+        for (Role role : roles) {
+            roleNameById.put(role.getRoleId(), role.getNameRole());
+        }
+        for (User user : allUsers) {
+            List<String> names = new ArrayList<>();
+            for (String roleId : rbacService.roleIdsOfUser(user.getUserId())) {
+                String name = roleNameById.get(roleId);
+                if (name != null) {
+                    names.add(name);
+                }
+            }
+            roleNamesByUser.put(user.getUserId(), names);
+        }
         refreshView();
     }
 
@@ -414,10 +479,10 @@ public class UserManagementView extends ViewBase {
     private List<User> applyFilter(List<User> source) {
         String keyword = StrUtil.trim(keywordField.getValue()).toLowerCase();
         String status = statusBox.getValue();
-        String permission = permissionBox.getValue();
+        String role = roleBox.getValue();
         List<User> result = new ArrayList<>();
         for (User user : source) {
-            if (!matchKeyword(user, keyword) || !matchStatus(user, status) || !matchPermission(user, permission)) {
+            if (!matchKeyword(user, keyword) || !matchStatus(user, status) || !matchRole(user, role)) {
                 continue;
             }
             result.add(user);
@@ -452,19 +517,12 @@ public class UserManagementView extends ViewBase {
         };
     }
 
-    private boolean matchPermission(User user, String permission) {
-        if (StrUtil.isBlank(permission) || PERM_ALL.equals(permission)) {
+    private boolean matchRole(User user, String role) {
+        if (StrUtil.isBlank(role) || ROLE_ALL.equals(role)) {
             return true;
         }
-        Set<String> items = user.permissionSet();
-        return switch (permission) {
-            case "无权限" -> items.isEmpty();
-            case "含新增" -> items.contains(Constants.ADD) || items.contains(Constants.ALL);
-            case "含删除" -> items.contains(Constants.DELETE) || items.contains(Constants.ALL);
-            case "含修改" -> items.contains(Constants.UPDATE) || items.contains(Constants.ALL);
-            case "含查询" -> items.contains(Constants.QUERY) || items.contains(Constants.ALL);
-            default -> true;
-        };
+        List<String> names = roleNamesByUser.get(user.getUserId());
+        return names != null && names.contains(role);
     }
 
     private void sortView() {
@@ -552,7 +610,7 @@ public class UserManagementView extends ViewBase {
     // ==================================================================
 
     private void batchToggle(boolean enable) {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.USER_UPDATE)) {
             Dialogs.warn("权限不足，无法修改用户状态");
             return;
         }
@@ -639,7 +697,8 @@ public class UserManagementView extends ViewBase {
      * 校验一批用户能否被改状态或删除，返回拒绝原因，全部允许时返回 null。
      * <p>
      * 三条硬约束：内置管理员不可删不可禁用；不能动自己；不能让系统失去最后一个
-     * 拥有全部权限的启用账号，否则改完就再也登不进来了。
+     * 管理员账号（历史权限列 {@code ALL} 或内置「系统管理员」角色，二者其一即是），
+     * 否则改完就再也登不进来了。
      */
     private String checkProtected(List<User> targets, boolean removing) {
         for (User target : targets) {
@@ -662,7 +721,7 @@ public class UserManagementView extends ViewBase {
             if (currentId.equals(target.getUserId())) {
                 touchSelf = true;
             }
-            if (target.isAllPermission() && target.isEnabled() && adminCount <= 1) {
+            if (isAdminUser(target) && target.isEnabled() && adminCount <= 1) {
                 touchLastAdmin = true;
             }
         }
@@ -670,16 +729,26 @@ public class UserManagementView extends ViewBase {
             return removing ? "不能删除当前登录的账号" : "不能修改当前登录账号的状态";
         }
         if (touchLastAdmin) {
-            return removing ? "这是最后一个拥有全部权限的启用账号，删除后将无法登录，已阻止"
-                    : "这是最后一个拥有全部权限的启用账号，禁用后将无法登录，已阻止";
+            return removing ? "这是系统最后一个管理员账号，删除后将无法登录，已阻止"
+                    : "这是系统最后一个管理员账号，禁用后将无法登录，已阻止";
         }
         return null;
+    }
+
+    /**
+     * 是否管理员身份：历史权限列 {@code ALL}，或持有内置「系统管理员」角色。
+     * <p>
+     * RBAC 之后管理员不只有 legacy {@code ALL} 一种形态——通过角色拿到全权的账号
+     * 同样算数，否则「最后一个管理员」保护会出现漏网路径。
+     */
+    private boolean isAdminUser(User user) {
+        return user != null && (user.isAllPermission() || rbacService.isAdminUser(user.getUserId()));
     }
 
     private int countEnabledAdmins() {
         int count = 0;
         for (User user : allUsers) {
-            if (user.isAllPermission() && user.isAvailable()) {
+            if (isAdminUser(user) && user.isAvailable()) {
                 count++;
             }
         }
@@ -702,12 +771,15 @@ public class UserManagementView extends ViewBase {
         private final PasswordField confirmField = new PasswordField("确认密码 *");
         private final RadioButtonGroup<String> flagGroup = new RadioButtonGroup<>("状态");
         private final DatePicker expireField = new DatePicker("有效期至");
-        private final MultiSelectComboBox<String> permissionBoxField = new MultiSelectComboBox<>("权限 *");
+        private final MultiSelectComboBox<Role> roleBoxField = new MultiSelectComboBox<>("角色 *");
 
         private final User editing;
+        /** 打开窗口时库里的角色快照，用于回显 */
+        private final List<Role> allRoles;
 
         UserEditDialog(User editing) {
             this.editing = editing;
+            this.allRoles = rbacService.allRoles();
             setHeaderTitle(editing == null ? "新增用户" : "编辑用户 " + editing.getUserId());
             setWidth("750px");
             setCloseOnOutsideClick(false);
@@ -720,10 +792,10 @@ public class UserManagementView extends ViewBase {
             expireField.setMin(LocalDate.of(2000, 1, 1));
             expireField.setWidthFull();
 
-            permissionBoxField.setItems(Constants.ADD, Constants.DELETE, Constants.UPDATE, Constants.QUERY,
-                    Constants.UPLOAD, Constants.ALL);
-            permissionBoxField.setPlaceholder("选择权限");
-            permissionBoxField.setWidthFull();
+            roleBoxField.setItems(allRoles);
+            roleBoxField.setItemLabelGenerator(Role::getNameRole);
+            roleBoxField.setPlaceholder("选择角色，权限由角色决定");
+            roleBoxField.setWidthFull();
 
             passwordField.setPlaceholder("不少于 " + MIN_PASSWORD_LENGTH + " 位");
             confirmField.setPlaceholder("再输入一次");
@@ -742,12 +814,12 @@ public class UserManagementView extends ViewBase {
             HorizontalLayout row2 = formRow(orgField, emailField);
             HorizontalLayout row3 = formRow(phoneField, expireField);
             HorizontalLayout row4 = formRow(passwordField, confirmField);
-            HorizontalLayout row5 = formRow(flagGroup, permissionBoxField);
+            HorizontalLayout row5 = formRow(flagGroup, roleBoxField);
 
             String hint = editing == null
-                    ? "用户名创建后不可修改；权限决定该账号能看到和操作哪些功能。"
+                    ? "用户名创建后不可修改；权限由所选角色决定，角色可在「角色管理」页维护。"
                     : (editing.isBuiltinAdmin()
-                            ? "内置管理员 " + User.ADMIN_USER_ID + "：状态 / 权限 / 有效期已锁定，仅可修改资料与密码。"
+                            ? "内置管理员 " + User.ADMIN_USER_ID + "：状态 / 角色 / 有效期已锁定，仅可修改资料与密码。"
                             : "用户名不可修改；密码留空表示不改动。");
             Span hintSpan = new Span(hint);
             hintSpan.addClassName("view-subtitle");
@@ -765,8 +837,14 @@ public class UserManagementView extends ViewBase {
             if (editing != null) {
                 fillForm();
             } else {
-                permissionBoxField.select(Constants.QUERY);
-                // 新建账号默认给一个月有效期：从当前时间起 +1 个月，按天粒度落到 DatePicker
+                // 新建账号默认挂「普通用户」角色（如果存在）：与角色管理页的默认勾选一致，
+                // 不给的话新账号登进来是一个空菜单，反而像系统坏了
+                for (Role role : allRoles) {
+                    if (Role.DEFAULT_ROLE_ID.equals(role.getRoleId())) {
+                        roleBoxField.select(role);
+                        break;
+                    }
+                }
                 expireField.setValue(LocalDate.now().plusMonths(1));
             }
             userIdField.setEnabled(editing == null);
@@ -780,7 +858,13 @@ public class UserManagementView extends ViewBase {
             phoneField.setValue(StrUtil.nullToEmpty(editing.getCdPhone()));
             expireField.setValue(toLocalDate(editing.getExpireTime()));
             flagGroup.setValue(editing.isEnabled() ? FLAG_ENABLE_TEXT : FLAG_DISABLE_TEXT);
-            permissionBoxField.select(editing.permissionSet());
+            // 回显角色：按 ID 从打开窗口时的角色快照里找，找不到（这期间被删了）就跳过
+            Set<String> roleIds = new java.util.HashSet<>(rbacService.roleIdsOfUser(editing.getUserId()));
+            for (Role role : allRoles) {
+                if (roleIds.contains(role.getRoleId())) {
+                    roleBoxField.select(role);
+                }
+            }
             passwordField.setLabel("密码");
             confirmField.setLabel("确认密码");
             if (editing.isBuiltinAdmin()) {
@@ -788,7 +872,7 @@ public class UserManagementView extends ViewBase {
                 expireField.setValue(null);
                 expireField.setEnabled(false);
                 flagGroup.setEnabled(false);
-                permissionBoxField.setEnabled(false);
+                roleBoxField.setEnabled(false);
             }
         }
 
@@ -799,10 +883,14 @@ public class UserManagementView extends ViewBase {
                 Dialogs.warn(validation);
                 return;
             }
-            String permission = buildPermission();
-            if (StrUtil.isBlank(permission)) {
-                Dialogs.warn("请至少选择一项权限");
+            Set<Role> selectedRoles = roleBoxField.getValue();
+            if (selectedRoles == null || selectedRoles.isEmpty()) {
+                Dialogs.warn("请至少选择一个角色");
                 return;
+            }
+            Set<String> roleIds = new LinkedHashSet<>();
+            for (Role role : selectedRoles) {
+                roleIds.add(role.getRoleId());
             }
             String flag = FLAG_DISABLE_TEXT.equals(flagGroup.getValue()) ? User.FLAG_DISABLED : User.FLAG_ENABLED;
 
@@ -818,12 +906,14 @@ public class UserManagementView extends ViewBase {
                 user.setEmail(StrUtil.trim(emailField.getValue()));
                 user.setCdPhone(StrUtil.trim(phoneField.getValue()));
                 user.setPassword(Util.getSm3DigestStr(passwordField.getValue()));
-                user.setPermission(permission);
+                // 权限全部走角色：users.permission 历史列留空，只对存量账号有意义
+                user.setPermission("");
                 user.setUserFlag(flag);
                 user.setCreateTime(new Date());
                 user.setExpireTime(toDate(expireField.getValue()));
                 userDao.insert(user);
-                log.info("新增用户 {}", userId);
+                rbacService.assignRoles(userId, roleIds);
+                log.info("新增用户 {}（角色 {}）", userId, roleIds);
                 close();
                 reloadData();
                 Dialogs.success("用户 " + userId + " 创建成功");
@@ -849,33 +939,27 @@ public class UserManagementView extends ViewBase {
             db.setEmail(StrUtil.trim(emailField.getValue()));
             db.setCdPhone(StrUtil.trim(phoneField.getValue()));
             if (db.isBuiltinAdmin()) {
-                // 表单控件已经禁用，这里再钉死一次：内置管理员的权限、状态、有效期
-                // 不允许被任何路径改掉，否则系统会失去唯一的引导账号
+                // 表单控件已经禁用，这里再钉死一次：内置管理员的权限列、状态、有效期
+                // 不允许被任何路径改掉，否则系统会失去唯一的引导账号。
+                // 角色同样不在这里动——它由 DbInitializer 保证挂「系统管理员」。
                 db.setPermission(Constants.ALL);
                 db.setUserFlag(User.FLAG_ENABLED);
                 db.setExpireTime(null);
             } else {
-                db.setPermission(permission);
+                db.setPermission("");
                 db.setUserFlag(flag);
                 db.setExpireTime(toDate(expireField.getValue()));
+                rbacService.assignRoles(db.getUserId(), roleIds);
             }
             // 密码留空即不改动：直接复用库里读出来的密文
             if (StrUtil.isNotBlank(passwordField.getValue())) {
                 db.setPassword(Util.getSm3DigestStr(passwordField.getValue()));
             }
             userDao.updateById(db);
-            log.info("修改用户 {}", db.getUserId());
+            log.info("修改用户 {}（角色 {}）", db.getUserId(), roleIds);
             close();
             reloadData();
             Dialogs.success("用户 " + db.getUserId() + " 已保存");
-        }
-
-        private String buildPermission() {
-            Set<String> selected = permissionBoxField.getValue();
-            if (selected == null || selected.isEmpty()) {
-                return "";
-            }
-            return String.join(",", selected) + ",";
         }
 
         /** 表单校验。返回错误提示，全部通过返回 null。 */
@@ -1001,8 +1085,13 @@ public class UserManagementView extends ViewBase {
     // 权限
     // ==================================================================
 
+    /**
+     * 页面内按钮的权限判断，统一走 RBAC 的有效权限快照。
+     * <p>
+     * 不要再写成 {@code user.hasPermission(code)}——那只看 {@code users.permission}
+     * 历史列，看不见角色授予的权限（{@code CurrentUser.hasPermission} 两者都看）。
+     */
     private static boolean hasPermission(String code) {
-        User user = com.sl.security.CurrentUser.get();
-        return user != null && user.hasPermission(code);
+        return com.sl.security.CurrentUser.hasPermission(code);
     }
 }

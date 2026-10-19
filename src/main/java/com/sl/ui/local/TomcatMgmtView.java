@@ -9,7 +9,7 @@ import com.sl.mapper.TomcatInfoMapper;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.ViewBase;
 import com.sl.ui.component.UiFactory;
-import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.sl.util.SSHClientUtil;
 import com.sl.util.SshConnectionPool;
 import com.sl.util.Util;
@@ -123,7 +123,7 @@ public class TomcatMgmtView extends ViewBase {
 
         Button searchBtn = UiFactory.primary("搜索", this::reload);
         Button addBtn = UiFactory.button("添加实例", () -> {
-            if (!hasPermission(Constants.ADD)) {
+            if (!hasPermission(PermCodes.TOMCAT_ADD)) {
                 Dialogs.warn("权限不足，无法添加实例");
                 return;
             }
@@ -173,7 +173,7 @@ public class TomcatMgmtView extends ViewBase {
         if (isTemplate(t)) {
             // 默认项目模板行：只提供「复制」，复制后弹窗修改保存为新实例
             Button copyBtn = UiFactory.rowAction("复制", () -> {
-                if (!hasPermission(Constants.ADD)) {
+                if (!hasPermission(PermCodes.TOMCAT_ADD)) {
                     Dialogs.warn("权限不足，无法复制实例");
                     return;
                 }
@@ -190,7 +190,7 @@ public class TomcatMgmtView extends ViewBase {
         Button stopBtn = UiFactory.rowAction("停止", () -> confirmStop(t));
         Button statusBtn = UiFactory.rowAction("查看状态", () -> checkStatus(t, startBtn, stopBtn));
         Button editBtn = UiFactory.rowAction("修改", () -> {
-            if (!hasPermission(Constants.UPDATE)) {
+            if (!hasPermission(PermCodes.TOMCAT_UPDATE)) {
                 Dialogs.warn("权限不足，无法修改实例");
                 return;
             }
@@ -301,7 +301,7 @@ public class TomcatMgmtView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void confirmDelete(TomcatInfoEntity t) {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.TOMCAT_DELETE)) {
             Dialogs.warn("权限不足，无法删除实例");
             return;
         }
@@ -344,7 +344,7 @@ public class TomcatMgmtView extends ViewBase {
                     Dialogs.success("已上传到 " + targetDir + "：" + file.getName());
                 })),
                 metadata -> {
-                    if (!hasPermission(Constants.UPLOAD)) {
+                    if (!hasPermission(PermCodes.TOMCAT_UPLOAD)) {
                         throw new IOException("权限不足，禁止上传");
                     }
                     File dir = new File(targetDir);
@@ -381,7 +381,7 @@ public class TomcatMgmtView extends ViewBase {
                     }, "tomcat-upload-" + tomcatId).start());
                 },
                 metadata -> {
-                    if (!hasPermission(Constants.UPLOAD)) {
+                    if (!hasPermission(PermCodes.TOMCAT_UPLOAD)) {
                         throw new IOException("权限不足，禁止上传");
                     }
                     return File.createTempFile("lanyue-upload-", "-" + UiFactory.safeFileName(metadata.fileName()));
@@ -486,7 +486,6 @@ public class TomcatMgmtView extends ViewBase {
     // ------------------------------------------------------------------
 
     private static boolean hasPermission(String code) {
-        com.sl.entity.User user = com.sl.security.CurrentUser.get();
-        return user != null && user.hasPermission(code);
+        return com.sl.security.CurrentUser.hasPermission(code);
     }
 }

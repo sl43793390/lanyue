@@ -1945,3 +1945,15 @@ vaadin-grid::part(odd-row-cell) {
     color: var(--lumo-secondary-text-color);
     line-height: var(--lumo-line-height-m);
 }
+
+/* ============================================================
+   角色管理：权限树（TreeGrid）。
+   树分两级——根 = 菜单（页面访问权），子 = 页面内部的操作按钮，
+   层级缩进由 TreeGrid 的 vaadin-grid-tree-toggle 自己表达，
+   这里只收紧行高：权限树有 30+ 个根节点，默认行高下一屏看不了几个，
+   勾权限时要来回滚。半选（indeterminate）的父节点走 Lumo 默认的
+   主色虚线样式，和实心全勾一眼能区分。
+   ============================================================ */
+.role-perm-tree::part(row) {
+    min-height: 34px;
+}

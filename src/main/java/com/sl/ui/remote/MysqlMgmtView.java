@@ -11,7 +11,7 @@ import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
-import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.sl.util.SSHClientUtil;
 import com.sl.util.SshConnectionPool;
 import com.sl.util.Util;
@@ -396,7 +396,7 @@ public class MysqlMgmtView extends ViewBase {
 
     /** 服务操作确认 + 执行：unit 在就 systemctl，不在就 service 逐个试。 */
     private void confirmServiceOp(String op, String opName) {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.MYSQL_UPDATE)) {
             Dialogs.warn("权限不足，无法操作 MySQL 服务");
             return;
         }
@@ -503,7 +503,7 @@ public class MysqlMgmtView extends ViewBase {
      * 写回成功后询问是否立即重启——my.cnf 不像 nginx 有 reload，改完必须重启才生效。
      */
     private void saveConfig(boolean askRestart) {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.MYSQL_UPDATE)) {
             Dialogs.warn("权限不足，无法保存配置");
             return;
         }
@@ -566,7 +566,7 @@ public class MysqlMgmtView extends ViewBase {
      * 然后弹确认窗——编辑器里展示的就是「会在这台机器上跑的那份脚本」，不做暗箱操作。
      */
     private void installMysqlRequested() {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.MYSQL_UPDATE)) {
             Dialogs.warn("权限不足，无法安装 MySQL");
             return;
         }
@@ -933,7 +933,6 @@ public class MysqlMgmtView extends ViewBase {
     }
 
     private static boolean hasPermission(String code) {
-        com.sl.entity.User user = com.sl.security.CurrentUser.get();
-        return user != null && user.hasPermission(code);
+        return com.sl.security.CurrentUser.hasPermission(code);
     }
 }

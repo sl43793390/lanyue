@@ -9,7 +9,7 @@ import com.sl.mapper.CommonProjectMgmtMapper;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.ViewBase;
 import com.sl.ui.component.UiFactory;
-import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.sl.util.SSHClientUtil;
 import com.sl.util.SshConnectionPool;
 import com.sl.util.Util;
@@ -125,7 +125,7 @@ public class CommonProjectView extends ViewBase {
 
         Button searchBtn = UiFactory.primary("搜索", this::reload);
         Button addBtn = UiFactory.button("添加项目", () -> {
-            if (!hasPermission(Constants.ADD)) {
+            if (!hasPermission(PermCodes.PROJECT_ADD)) {
                 Dialogs.warn("权限不足，无法添加项目");
                 return;
             }
@@ -175,7 +175,7 @@ public class CommonProjectView extends ViewBase {
         if (isTemplate(p)) {
             // 默认项目模板行：只提供「复制」，复制后弹窗修改保存为新项目
             Button copyBtn = UiFactory.rowAction("复制", () -> {
-                if (!hasPermission(Constants.ADD)) {
+                if (!hasPermission(PermCodes.PROJECT_ADD)) {
                     Dialogs.warn("权限不足，无法复制项目");
                     return;
                 }
@@ -194,7 +194,7 @@ public class CommonProjectView extends ViewBase {
         Button refreshBtn = UiFactory.rowAction("刷新配置", () -> confirmRun(p, p.getCmdRefresh(), "刷新配置"));
         Button statusBtn = UiFactory.rowAction("查看状态", () -> checkStatus(p, startBtn, stopBtn));
         Button editBtn = UiFactory.rowAction("修改", () -> {
-            if (!hasPermission(Constants.UPDATE)) {
+            if (!hasPermission(PermCodes.PROJECT_UPDATE)) {
                 Dialogs.warn("权限不足，无法修改项目");
                 return;
             }
@@ -322,7 +322,7 @@ public class CommonProjectView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void confirmDelete(CommonProjectMgmt p) {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.PROJECT_DELETE)) {
             Dialogs.warn("权限不足，无法删除项目");
             return;
         }
@@ -363,7 +363,7 @@ public class CommonProjectView extends ViewBase {
                     Dialogs.success("已上传到 " + targetDir + "：" + file.getName());
                 })),
                 metadata -> {
-                    if (!hasPermission(Constants.UPLOAD)) {
+                    if (!hasPermission(PermCodes.PROJECT_UPLOAD)) {
                         throw new IOException("权限不足，禁止上传");
                     }
                     File dir = new File(targetDir);
@@ -400,7 +400,7 @@ public class CommonProjectView extends ViewBase {
                     }, "common-upload-" + projectId).start());
                 },
                 metadata -> {
-                    if (!hasPermission(Constants.UPLOAD)) {
+                    if (!hasPermission(PermCodes.PROJECT_UPLOAD)) {
                         throw new IOException("权限不足，禁止上传");
                     }
                     return File.createTempFile("lanyue-upload-", "-" + UiFactory.safeFileName(metadata.fileName()));
@@ -515,7 +515,6 @@ public class CommonProjectView extends ViewBase {
     // ------------------------------------------------------------------
 
     private static boolean hasPermission(String code) {
-        com.sl.entity.User user = com.sl.security.CurrentUser.get();
-        return user != null && user.hasPermission(code);
+        return com.sl.security.CurrentUser.hasPermission(code);
     }
 }

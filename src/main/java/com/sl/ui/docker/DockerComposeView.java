@@ -15,7 +15,7 @@ import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
-import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.DetachEvent;
 import com.vaadin.flow.component.button.Button;
@@ -352,7 +352,7 @@ public class DockerComposeView extends ViewBase {
             Dialogs.warn("请先连接目标服务器");
             return;
         }
-        if (!hasPermission(Constants.ADD)) {
+        if (!hasPermission(PermCodes.COMPOSE_ADD)) {
             Dialogs.warn("权限不足，无法新建项目");
             return;
         }
@@ -413,7 +413,7 @@ public class DockerComposeView extends ViewBase {
             Dialogs.warn("请先连接目标服务器");
             return;
         }
-        if (!hasPermission(Constants.ADD)) {
+        if (!hasPermission(PermCodes.COMPOSE_ADD)) {
             Dialogs.warn("权限不足，无法添加项目");
             return;
         }
@@ -574,7 +574,7 @@ public class DockerComposeView extends ViewBase {
     }
 
     private void confirmDelete(ComposeProject project) {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.COMPOSE_DELETE)) {
             Dialogs.warn("权限不足，无法删除项目");
             return;
         }
@@ -788,8 +788,7 @@ public class DockerComposeView extends ViewBase {
     }
 
     private static boolean hasPermission(String code) {
-        com.sl.entity.User user = com.sl.security.CurrentUser.get();
-        return user != null && user.hasPermission(code);
+        return com.sl.security.CurrentUser.hasPermission(code);
     }
 
     /** 新建项目的创建人记登录用户；列表展示不按人隔离。 */

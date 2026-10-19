@@ -2,6 +2,7 @@ package com.sl.security;
 
 import com.sl.entity.User;
 import com.sl.mapper.UserDao;
+import com.sl.service.RbacService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -9,8 +10,10 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
+import java.util.Set;
+
 /**
- * 从 {@code users} 表读取账号。
+ * 从 {@code users} 表读取账号，并按 RBAC 解析有效权限。
  * <p>
  * 账号的唯一来源就是这张表，没有任何外部用户文件——这一点是旧项目刻意做的改造：
  * 早期版本要求把 {@code users.properties} 放在 jar 同级目录，那个文件丢了或编码错了
@@ -20,6 +23,10 @@ import org.springframework.stereotype.Service;
  * {@code DaoAuthenticationProvider} 默认会把 {@code hideUserNotFoundExceptions} 打开，
  * 把它转换成 {@code BadCredentialsException}。也就是说"用户名不存在"和"密码错误"
  * 对外都是同一句提示，不会泄露哪些账号真实存在。这是有意保留的行为。
+ * <p>
+ * <b>RBAC 接入点</b>：登录时调一次 {@link RbacService#effectivePermissions(User)}
+ * （角色权限 ∪ 历史权限列），快照装进 {@link UserPrincipal}。改角色后需要重新登录
+ * 才生效——对这套内网运维工具是可接受的权衡，见 {@code RbacService} 类注释。
  */
 @Service
 public class DbUserDetailsService implements UserDetailsService {
@@ -28,10 +35,13 @@ public class DbUserDetailsService implements UserDetailsService {
 
     private final UserDao userDao;
     private final LoginAttemptService loginAttemptService;
+    private final RbacService rbacService;
 
-    public DbUserDetailsService(UserDao userDao, LoginAttemptService loginAttemptService) {
+    public DbUserDetailsService(UserDao userDao, LoginAttemptService loginAttemptService,
+                                RbacService rbacService) {
         this.userDao = userDao;
         this.loginAttemptService = loginAttemptService;
+        this.rbacService = rbacService;
     }
 
     @Override
@@ -55,7 +65,8 @@ public class DbUserDetailsService implements UserDetailsService {
             log.warn("登录被拒：账号 {} 处于冻结期（剩余约 {} 分钟）",
                     userId, (loginAttemptService.remainingLockSeconds(userId) + 59) / 60);
         }
-        return new UserPrincipal(user, locked);
+        Set<String> effective = rbacService.effectivePermissions(user);
+        return new UserPrincipal(user, locked, effective);
     }
 
     /**

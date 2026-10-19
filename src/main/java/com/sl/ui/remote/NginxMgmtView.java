@@ -11,7 +11,7 @@ import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
-import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.sl.util.SSHClientUtil;
 import com.sl.util.SshConnectionPool;
 import com.sl.util.Util;
@@ -365,7 +365,7 @@ public class NginxMgmtView extends ViewBase {
      * 然后弹确认窗——编辑器里展示的就是「会在这台机器上跑的那份脚本」，不做暗箱操作。
      */
     private void installNginxRequested() {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.NGINX_UPDATE)) {
             Dialogs.warn("权限不足，无法安装 nginx");
             return;
         }
@@ -608,7 +608,7 @@ public class NginxMgmtView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void confirmStart() {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.NGINX_UPDATE)) {
             Dialogs.warn("权限不足，无法操作 nginx");
             return;
         }
@@ -621,7 +621,7 @@ public class NginxMgmtView extends ViewBase {
     }
 
     private void confirmStop() {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.NGINX_UPDATE)) {
             Dialogs.warn("权限不足，无法操作 nginx");
             return;
         }
@@ -632,7 +632,7 @@ public class NginxMgmtView extends ViewBase {
 
     /** 执行一条 nginx 自身的管理命令（start/stop/reload/-t），结果进输出区并刷新运行状态。 */
     private void runNginx(String args, String actionName) {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.NGINX_UPDATE)) {
             Dialogs.warn("权限不足，无法操作 nginx");
             return;
         }
@@ -722,7 +722,7 @@ public class NginxMgmtView extends ViewBase {
      * 写回成功后询问是否立即 reload——改完配置不 reload 是这类页面最常被踩的坑。
      */
     private void saveConfig(boolean askReload) {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.NGINX_UPDATE)) {
             Dialogs.warn("权限不足，无法保存配置");
             return;
         }
@@ -937,7 +937,6 @@ public class NginxMgmtView extends ViewBase {
     }
 
     private static boolean hasPermission(String code) {
-        com.sl.entity.User user = com.sl.security.CurrentUser.get();
-        return user != null && user.hasPermission(code);
+        return com.sl.security.CurrentUser.hasPermission(code);
     }
 }

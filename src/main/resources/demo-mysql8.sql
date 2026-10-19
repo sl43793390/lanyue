@@ -80,6 +80,62 @@ VALUES
     ('temp', '临时账号', '55E12E91650D2FEC56EC74E1D3E4DDBFCE2EF3A65890C2A19ECF88A307E76A23', DATE_SUB(NOW(), INTERVAL 60 DAY), 'temp@example.com', '外包团队', '13900000004', DATE_SUB(CURDATE(), INTERVAL 5 DAY), '1', 'ADD,QUERY,');
 
 -- ----------------------------
+-- Table structure for RBAC（roles / permissions / role_permissions / user_roles）
+--   模型：users ─< user_roles >─ roles ─< role_permissions >─ permissions
+--   有效权限 = 角色权限并集 ∪ users.permission 历史权限列（ALL 命中全部）。
+--
+--   permissions 是**树**，只有两级，与需求一一对应：
+--     根    = 菜单（cd_type = 'MENU'，  nbr_level = 1），码形如 user:view
+--     子节点 = 页面内部的操作按钮（cd_type = 'BUTTON'，nbr_level = 2），码形如 user:add
+--   cd_perm 是权限码，全表唯一，程序里所有判断都认它；id_parent 表达父子。
+--   nbr_level / nbr_order 建 INTEGER 而不是 VARCHAR：排序数字列走字典序会把
+--   "10" 排到 "2" 前面（MySQL 的 VARCHAR ORDER BY 行为）。
+--
+--   本脚本**只建表，不灌权限数据**：权限树与内置角色由 DbInitializer 启动时按
+--   PermissionCatalog 自动播种（幂等）。菜单结构以 MenuRegistry 为唯一事实源，
+--   在这里抄一份静态数据只会与代码漂移。两个内置角色的 ID 是固定的
+--   （role_admin = 系统管理员 / role_default = 普通用户），下面的演示分配引用它们。
+-- ----------------------------
+DROP TABLE IF EXISTS `user_roles`;
+DROP TABLE IF EXISTS `role_permissions`;
+DROP TABLE IF EXISTS `roles`;
+DROP TABLE IF EXISTS `permissions`;
+CREATE TABLE `permissions` (
+    `id_perm`    VARCHAR(32)  NOT NULL,
+    `cd_perm`    VARCHAR(64)  NOT NULL,
+    `name_perm`  VARCHAR(64)  NOT NULL,
+    `id_parent`  VARCHAR(32),
+    `nbr_level`  INTEGER,
+    `nbr_order`  INTEGER,
+    `cd_type`    VARCHAR(16),
+    `cd_desc`    VARCHAR(255),
+    `create_time` VARCHAR(32),
+    PRIMARY KEY (`id_perm`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE `roles` (
+    `id_role`      VARCHAR(32)  NOT NULL,
+    `name_role`    VARCHAR(64)  NOT NULL,
+    `cd_desc`      VARCHAR(255),
+    `flag_builtin` VARCHAR(1),
+    `create_time`  VARCHAR(32),
+    PRIMARY KEY (`id_role`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE `role_permissions` (
+    `id_role` VARCHAR(32) NOT NULL,
+    `id_perm` VARCHAR(32) NOT NULL,
+    PRIMARY KEY (`id_role`, `id_perm`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE `user_roles` (
+    `id_user` VARCHAR(50) NOT NULL,
+    `id_role` VARCHAR(32) NOT NULL,
+    PRIMARY KEY (`id_user`, `id_role`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- 演示分配：admin 的「系统管理员」角色由 DbInitializer 启动时自动补挂，
+-- 这里给两个演示账号挂「普通用户」角色（概览、免登录服务器列表、drawio、其他工具、github优选）
+INSERT IGNORE INTO `user_roles` (`id_user`, `id_role`) VALUES ('test', 'role_default');
+INSERT IGNORE INTO `user_roles` (`id_user`, `id_role`) VALUES ('developer', 'role_default');
+
+-- ----------------------------
 -- Table structure for common_project_mgmt（通用项目：靠一串 shell 命令起停的项目）
 -- 主键是 (id_host, id_project)，两列都必须有长度。
 -- ----------------------------

@@ -5,6 +5,7 @@ import com.sl.db.DatabaseDialect;
 import com.sl.db.DatabaseInfo;
 import com.sl.entity.User;
 import com.sl.mapper.UserDao;
+import com.sl.service.RbacService;
 import com.sl.util.Constants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -169,6 +170,50 @@ public class DbInitializer implements ApplicationRunner {
             new String[] {"id_github"});
 
     /**
+     * RBAC：权限树（根 = 菜单，子 = 页面内操作按钮）。
+     * cd_perm 是权限码（user:view / user:add），程序只认它；id_parent 表达父子，
+     * 只有两级，不建第三层。内容由 RbacService 按 PermissionCatalog 播种。
+     * nbr_level / nbr_order 建 INTEGER 而不是 VARCHAR：排序数字列走字典序会把
+     * "10" 排到 "2" 前面（MySQL 的 VARCHAR ORDER BY 行为），见 DatabaseDialect.columnType。
+     */
+    private static final TableDef PERMISSIONS = new TableDef("permissions",
+            new Object[][] {
+                    {"id_perm", 32, true},
+                    {"cd_perm", 64, true},
+                    {"name_perm", 64, true},
+                    {"id_parent", 32, false},
+                    {"nbr_level", "INTEGER", false},
+                    {"nbr_order", "INTEGER", false},
+                    {"cd_type", 16, false},
+                    {"cd_desc", 255, false},
+                    {"create_time", 32, false}},
+            new String[] {"id_perm"});
+
+    /** RBAC：角色。flag_builtin = '1' 的内置角色（系统管理员）不允许删除。 */
+    private static final TableDef ROLES = new TableDef("roles",
+            new Object[][] {
+                    {"id_role", 32, true},
+                    {"name_role", 64, true},
+                    {"cd_desc", 255, false},
+                    {"flag_builtin", 1, false},
+                    {"create_time", 32, false}},
+            new String[] {"id_role"});
+
+    /** RBAC：角色 → 权限关联，复合主键。 */
+    private static final TableDef ROLE_PERMISSIONS = new TableDef("role_permissions",
+            new Object[][] {
+                    {"id_role", 32, true},
+                    {"id_perm", 32, true}},
+            new String[] {"id_role", "id_perm"});
+
+    /** RBAC：用户 → 角色关联，复合主键。 */
+    private static final TableDef USER_ROLES = new TableDef("user_roles",
+            new Object[][] {
+                    {"id_user", 50, true},
+                    {"id_role", 32, true}},
+            new String[] {"id_user", "id_role"});
+
+    /**
      * 启动时逐张兜底的全部表，业务表与 demo.sql / demo-mysql8.sql 逐表逐列对应。
      * <p>
      * 改表结构时**三处同步**：这里的定义、demo.sql、demo-mysql8.sql。
@@ -176,7 +221,9 @@ public class DbInitializer implements ApplicationRunner {
      * 与脚本的分工是：脚本（开头有 DROP TABLE）给人手工初始化演示库用，
      * 这里保证全新环境不执行任何脚本也能直接启动。
      * <p>
-     * 列定义每行是 {列名, VARCHAR 长度, 是否 NOT NULL}。NOT NULL 只在**建表**那条路径生效
+     * 列定义每行是 {列名, 类型, 是否 NOT NULL}。类型给整数当 VARCHAR 长度，给字符串
+     * （如 "INTEGER"）则原样作为列类型——排序数字列必须走后者，理由见 PERMISSIONS 注释。
+     * NOT NULL 只在**建表**那条路径生效
      * （复合主键的成员列必须 NOT NULL，否则 MySQL 建不出表）；补列路径一律不带 NOT NULL，
      * 因为 SQLite 的 ADD COLUMN 不接受无默认值的 NOT NULL，MySQL 也会因已有行需要默认值而失败。
      */
@@ -245,7 +292,11 @@ public class DbInitializer implements ApplicationRunner {
             DRAWIO_FILE,
             COMPOSE_PROJECT,
             LINUX_CMD,
-            GITHUB_FAVORITE};
+            GITHUB_FAVORITE,
+            PERMISSIONS,
+            ROLES,
+            ROLE_PERMISSIONS,
+            USER_ROLES};
 
     /** 一张表的建表定义：表名、列（{列名, 长度, 是否 NOT NULL}）、主键列。 */
     private static final class TableDef {
@@ -275,13 +326,16 @@ public class DbInitializer implements ApplicationRunner {
     private final UserDao userDao;
     private final PasswordEncoder passwordEncoder;
     private final DatabaseInfo databaseInfo;
+    private final RbacService rbacService;
 
     public DbInitializer(DataSource dataSource, UserDao userDao,
-                         PasswordEncoder passwordEncoder, DatabaseInfo databaseInfo) {
+                         PasswordEncoder passwordEncoder, DatabaseInfo databaseInfo,
+                         RbacService rbacService) {
         this.dataSource = dataSource;
         this.userDao = userDao;
         this.passwordEncoder = passwordEncoder;
         this.databaseInfo = databaseInfo;
+        this.rbacService = rbacService;
     }
 
     @Override
@@ -298,9 +352,18 @@ public class DbInitializer implements ApplicationRunner {
             log.error("执行表结构兼容迁移失败", e);
         }
         try {
+            // 先保证 admin 行存在（RBAC 播种要给它挂角色），再做权限目录播种。
+            // 两者都幂等：admin 已存在时这步什么都不做。
             ensureAdminRow();
         } catch (Exception e) {
             log.error("检查内置管理员失败", e);
+        }
+        try {
+            // RBAC 播种：权限树（菜单 + 页面内按钮）与内置角色，幂等。
+            // 放在 ensureTables 之后——表必须先存在，Mapper 才查得动。
+            rbacService.ensureSeedData();
+        } catch (Exception e) {
+            log.error("RBAC 权限数据初始化失败，角色管理功能可能不可用", e);
         }
     }
 
@@ -469,7 +532,7 @@ public class DbInitializer implements ApplicationRunner {
             try (Statement st = conn.createStatement()) {
                 st.executeUpdate("ALTER TABLE " + dialect.quote(def.name)
                         + " ADD COLUMN " + dialect.quote(name)
-                        + " " + dialect.text((Integer) column[1]));
+                        + " " + dialect.columnType(column[1]));
             }
             added.add(name);
         }
@@ -483,7 +546,7 @@ public class DbInitializer implements ApplicationRunner {
         sql.append("CREATE TABLE IF NOT EXISTS ").append(dialect.quote(def.name)).append(" (");
         for (Object[] column : def.columns) {
             String name = (String) column[0];
-            sql.append(dialect.quote(name)).append(" ").append(dialect.text((Integer) column[1]));
+            sql.append(dialect.quote(name)).append(" ").append(dialect.columnType(column[1]));
             if (Boolean.TRUE.equals(column[2])) {
                 sql.append(" NOT NULL");
             }

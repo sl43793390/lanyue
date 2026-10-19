@@ -16,7 +16,7 @@ import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.HostCandidates;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
-import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.DetachEvent;
@@ -721,7 +721,7 @@ public class DockerMgmtView extends ViewBase {
     }
 
     private void batchDeleteContainers() {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.DOCKER_DELETE)) {
             Dialogs.warn("权限不足，无法删除容器");
             return;
         }
@@ -734,7 +734,7 @@ public class DockerMgmtView extends ViewBase {
     }
 
     private void confirmDeleteContainers(List<DockerContainer> targets) {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.DOCKER_DELETE)) {
             Dialogs.warn("权限不足，无法删除容器");
             return;
         }
@@ -781,7 +781,7 @@ public class DockerMgmtView extends ViewBase {
     }
 
     private void pruneStopped() {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.DOCKER_DELETE)) {
             Dialogs.warn("权限不足，无法清理容器");
             return;
         }
@@ -1093,7 +1093,7 @@ public class DockerMgmtView extends ViewBase {
     }
 
     private void confirmDeleteImages(List<DockerImage> targets) {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.DOCKER_DELETE)) {
             Dialogs.warn("权限不足，无法删除镜像");
             return;
         }
@@ -1137,7 +1137,7 @@ public class DockerMgmtView extends ViewBase {
     }
 
     private void confirmPruneImages() {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.DOCKER_DELETE)) {
             Dialogs.warn("权限不足，无法清理镜像");
             return;
         }
@@ -1247,8 +1247,7 @@ public class DockerMgmtView extends ViewBase {
     }
 
     private static boolean hasPermission(String code) {
-        com.sl.entity.User user = com.sl.security.CurrentUser.get();
-        return user != null && user.hasPermission(code);
+        return com.sl.security.CurrentUser.hasPermission(code);
     }
 
     // ------------------------------------------------------------------

@@ -5,6 +5,7 @@ import com.sl.ui.component.ViewBase;
 import com.sl.ui.local.CommonProjectView;
 import com.sl.ui.local.JarProjectView;
 import com.sl.ui.local.TomcatMgmtView;
+import com.sl.util.PermCodes;
 import com.vaadin.flow.component.AttachEvent;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.orderedlayout.FlexComponent;
@@ -93,34 +94,60 @@ public class RemoteAppMgmtView extends ViewBase {
         add(tabBar, contentHost);
         setFlexGrow(1, contentHost);
 
-        addTab("jar项目管理-" + host, () -> {
+        /*
+         * 子标签按权限显隐：每个子页是一个独立的权限码（与顶级菜单里的
+         * jar项目管理 / Tomcat管理 / 通用项目管理共用同一个码），
+         * 没有对应权限的账号看不到这个标签，也就不存在"看得见点不开"的入口。
+         * 五个标签全被过滤掉时给一句明确提示，别丢一个空页面给人猜。
+         */
+        addTabIfPermitted("jar项目管理-" + host, PermCodes.JAR_VIEW, () -> {
             JarProjectView view = applicationContext.getBean(JarProjectView.class);
             view.setPresetHost(presetHost);
             return view;
         });
-        addTab("Tomcat管理-" + host, () -> {
+        addTabIfPermitted("Tomcat管理-" + host, PermCodes.TOMCAT_VIEW, () -> {
             TomcatMgmtView view = applicationContext.getBean(TomcatMgmtView.class);
             view.setPresetHost(presetHost);
             return view;
         });
-        addTab("通用项目管理-" + host, () -> {
+        addTabIfPermitted("通用项目管理-" + host, PermCodes.PROJECT_VIEW, () -> {
             CommonProjectView view = applicationContext.getBean(CommonProjectView.class);
             view.setPresetHost(presetHost);
             return view;
         });
-        addTab("nginx管理-" + host, () -> {
+        addTabIfPermitted("nginx管理-" + host, PermCodes.NGINX_VIEW, () -> {
             NginxMgmtView view = applicationContext.getBean(NginxMgmtView.class);
             view.setPresetHost(presetHost);
             return view;
         });
-        addTab("MySQL管理-" + host, () -> {
+        addTabIfPermitted("MySQL管理-" + host, PermCodes.MYSQL_VIEW, () -> {
             MysqlMgmtView view = applicationContext.getBean(MysqlMgmtView.class);
             view.setPresetHost(presetHost);
             return view;
         });
 
+        if (tabs.isEmpty()) {
+            add(new Paragraph("没有可访问的应用管理功能：请让管理员为你的角色分配 "
+                    + "jar项目管理 / Tomcat管理 / 通用项目管理 / nginx管理 / MySQL管理 中至少一项权限。"));
+            return;
+        }
+
         // 默认选中第一个：Tabs 没有子项时 setSelectedTab 会 NPE，先 add 再选
         tabBar.setSelectedTab(tabs.values().iterator().next().tab());
+    }
+
+    /**
+     * 按权限码决定是否添加子标签。
+     * <p>
+     * 判断走 {@code CurrentUser.hasPermission}——登录时装进 UserPrincipal 的
+     * 有效权限快照（角色 ∪ 历史权限列），不查库。
+     */
+    private void addTabIfPermitted(String title, String permissionCode,
+                                   java.util.function.Supplier<Component> factory) {
+        if (!com.sl.security.CurrentUser.hasPermission(permissionCode)) {
+            return;
+        }
+        addTab(title, factory);
     }
 
     private void addTab(String title, java.util.function.Supplier<Component> factory) {

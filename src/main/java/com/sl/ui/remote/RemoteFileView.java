@@ -10,7 +10,7 @@ import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
 import com.sl.util.CharsetDetector;
-import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.sl.util.SSHClientUtil;
 import com.sl.util.SshConnectionPool;
 import com.vaadin.flow.component.AttachEvent;
@@ -266,7 +266,7 @@ public class RemoteFileView extends ViewBase {
 
     /** 打开分发弹窗。权限与 UI 状态（当前行、当前目录）都在请求线程上取好再传进去。 */
     private void openDistribute(FileRow row) {
-        if (!hasPermission(Constants.UPLOAD)) {
+        if (!hasPermission(PermCodes.RFILE_UPLOAD)) {
             Dialogs.warn("权限不足，无法分发文件");
             return;
         }
@@ -400,7 +400,7 @@ public class RemoteFileView extends ViewBase {
                     }, "file-upload").start());
                 },
                 metadata -> {
-                    if (!hasPermission(Constants.UPLOAD)) {
+                    if (!hasPermission(PermCodes.RFILE_UPLOAD)) {
                         throw new IOException("权限不足，禁止上传");
                     }
                     return File.createTempFile("lanyue-upload-", "-" + UiFactory.safeFileName(metadata.fileName()));
@@ -465,7 +465,7 @@ public class RemoteFileView extends ViewBase {
      * 全程后台线程，下载成功才弹窗。
      */
     private void openEditor(FileRow row) {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.RFILE_UPDATE)) {
             Dialogs.warn("权限不足，无法编辑文件");
             return;
         }
@@ -536,7 +536,7 @@ public class RemoteFileView extends ViewBase {
      */
     private void saveEditedFile(FileRow row, File tmp,
                                 CharsetDetector.TextSnapshot snapshot, String content, Dialog dialog) {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.RFILE_UPDATE)) {
             Dialogs.warn("权限不足，无法保存文件");
             return;
         }
@@ -569,7 +569,7 @@ public class RemoteFileView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void promptRename(FileRow row) {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.RFILE_UPDATE)) {
             Dialogs.warn("权限不足，无法重命名");
             return;
         }
@@ -602,7 +602,7 @@ public class RemoteFileView extends ViewBase {
     }
 
     private void promptNewDir(String base) {
-        if (!hasPermission(Constants.ADD)) {
+        if (!hasPermission(PermCodes.RFILE_ADD)) {
             Dialogs.warn("权限不足，无法新建目录");
             return;
         }
@@ -635,7 +635,7 @@ public class RemoteFileView extends ViewBase {
     }
 
     private void confirmDelete(FileRow row) {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.RFILE_DELETE)) {
             Dialogs.warn("权限不足，无法删除");
             return;
         }
@@ -687,7 +687,7 @@ public class RemoteFileView extends ViewBase {
 
     /** 「执行命令」弹窗：命令在当前浏览的目录（currentPath）下执行，输出就地展示。 */
     private void openExecDialog() {
-        if (!hasPermission(Constants.UPDATE)) {
+        if (!hasPermission(PermCodes.RFILE_UPDATE)) {
             Dialogs.warn("权限不足，无法执行命令");
             return;
         }
@@ -776,7 +776,7 @@ public class RemoteFileView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void confirmBatchDelete() {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.RFILE_DELETE)) {
             Dialogs.warn("权限不足，无法删除");
             return;
         }
@@ -815,7 +815,6 @@ public class RemoteFileView extends ViewBase {
     }
 
     private static boolean hasPermission(String code) {
-        com.sl.entity.User user = com.sl.security.CurrentUser.get();
-        return user != null && user.hasPermission(code);
+        return com.sl.security.CurrentUser.hasPermission(code);
     }
 }

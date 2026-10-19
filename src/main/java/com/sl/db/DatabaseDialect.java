@@ -63,6 +63,23 @@ public enum DatabaseDialect {
         return "VARCHAR(" + length + ")";
     }
 
+    /**
+     * 列类型声明，兼容「给长度」与「给原始类型名」两种写法。
+     * <p>
+     * 为什么需要原始类型名：{@code nbr_order} 这类**排序数字列**如果建成 VARCHAR，
+     * MySQL 的 ORDER BY 按字典序走，"10" 会排到 "2" 前面——权限树的菜单顺序就乱了
+     * （SQLite 不校验长度所以看不出来，问题只会在切 MySQL 那天暴露）。
+     * 传 {@code "INTEGER"} 即按两边都认的整数类型建列。
+     *
+     * @param spec {@link Integer} = VARCHAR 长度；{@link String} = 原始类型名（如 INTEGER）
+     */
+    public String columnType(Object spec) {
+        if (spec instanceof Integer length) {
+            return text(length);
+        }
+        return String.valueOf(spec);
+    }
+
     public boolean isSqlite() {
         return this == SQLITE;
     }

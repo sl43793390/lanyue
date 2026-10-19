@@ -31,7 +31,9 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.function.Supplier;
 
@@ -67,6 +69,7 @@ public class MainView extends VerticalLayout implements TabHost {
 
     private final transient ApplicationContext applicationContext;
     private final transient AuthenticationContext authenticationContext;
+    private final transient com.sl.service.RbacService rbacService;
 
     private final Tabs tabBar = new Tabs();
     private final Div contentHost = new Div();
@@ -83,9 +86,11 @@ public class MainView extends VerticalLayout implements TabHost {
     private record TabEntry(Tab tab, Component content) {
     }
 
-    public MainView(ApplicationContext applicationContext, AuthenticationContext authenticationContext) {
+    public MainView(ApplicationContext applicationContext, AuthenticationContext authenticationContext,
+                    com.sl.service.RbacService rbacService) {
         this.applicationContext = applicationContext;
         this.authenticationContext = authenticationContext;
+        this.rbacService = rbacService;
 
         addClassName("main-view");
         setSizeFull();
@@ -114,9 +119,12 @@ public class MainView extends VerticalLayout implements TabHost {
         // 标签页内部的内容才会自己滚动，而不是把整个页面顶出滚动条。
 //        setFlexGrow(1, contentArea);
 
-        // 进来先打开概览，避免主区域一片空白
-//        openTab(MenuRegistry.defaultItem());
-        openTab(MenuRegistry.remoteServer());
+        // 进来先打开第一个有权限的菜单项，避免主区域一片空白；
+        // 全部无权限时留空，由用户区提示联系管理员（页面本身仍是可用的）
+        MenuRegistry.Item initial = firstPermittedItem();
+        if (initial != null) {
+            openTab(initial);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -166,6 +174,13 @@ public class MainView extends VerticalLayout implements TabHost {
         return row;
     }
 
+    /**
+     * 菜单栏按 RBAC 过滤：只显示当前用户有效权限覆盖到的菜单项，
+     * 整组都被过滤掉时该分组直接不渲染（不留空的下拉）。
+     * <p>
+     * 判断走 {@link com.sl.security.CurrentUser#hasPermission(String)}——它读的是登录时
+     * 装进 {@code UserPrincipal} 的有效权限快照（角色 ∪ 历史权限列），不查库。
+     */
     private MenuBar buildMenuBar() {
         MenuBar menuBar = new MenuBar();
         menuBar.addClassName("main-menu");
@@ -173,8 +188,14 @@ public class MainView extends VerticalLayout implements TabHost {
         menuBar.setOpenOnHover(true);
 
         for (MenuRegistry.Group group : MenuRegistry.GROUPS) {
+            List<MenuRegistry.Item> visible = group.items().stream()
+                    .filter(this::hasMenuPermission)
+                    .toList();
+            if (visible.isEmpty()) {
+                continue;
+            }
             MenuItem groupItem = menuBar.addItem(group.title());
-            for (MenuRegistry.Item item : group.items()) {
+            for (MenuRegistry.Item item : visible) {
                 MenuItem sub = groupItem.getSubMenu().addItem(item.title(), e -> openTab(item));
                 if (!item.implemented()) {
                     sub.addClassName("main-menu-item-pending");
@@ -184,10 +205,33 @@ public class MainView extends VerticalLayout implements TabHost {
         return menuBar;
     }
 
+    /** 当前用户是否有权看到某个菜单项。权限码为空的菜单项视为登录即可访问。 */
+    private boolean hasMenuPermission(MenuRegistry.Item item) {
+        return item.permission() == null || item.permission().isBlank()
+                || com.sl.security.CurrentUser.hasPermission(item.permission());
+    }
+
+    /** 当前用户有权限打开的第一个菜单项；全部无权限时返回 null。 */
+    private MenuRegistry.Item firstPermittedItem() {
+        if(hasMenuPermission(MenuRegistry.GROUPS.get(2).items().get(1))){
+            return MenuRegistry.GROUPS.get(2).items().get(1);
+        }else{
+            for (MenuRegistry.Group group : MenuRegistry.GROUPS) {
+                for (MenuRegistry.Item item : group.items()) {
+                    if (hasMenuPermission(item) && item.implemented()) {
+                        return item;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
     /**
      * 右上角：当前用户名 + 退出按钮。
      * <p>
      * 用户名优先取实体里的「姓名」，取不到再退回登录名——旧项目顶栏显示的就是姓名。
+     * 悬浮提示显示**角色**（RBAC 之后的权限来源），不再显示旧权限串。
      */
     private Component buildUserArea() {
         HorizontalLayout area = new HorizontalLayout();
@@ -202,7 +246,14 @@ public class MainView extends VerticalLayout implements TabHost {
         Span name = new Span(displayName);
         name.addClassName("main-header-username");
         if (user != null) {
-            name.getElement().setAttribute("title", user.getUserId() + " · " + user.permissionText());
+            List<String> roleNames = new ArrayList<>();
+            for (com.sl.entity.Role role : rbacService.rolesOfUser(user.getUserId())) {
+                roleNames.add(role.getNameRole());
+            }
+            String tip = roleNames.isEmpty()
+                    ? (user.isAllPermission() ? user.getUserId() + " · 全部权限（旧）" : user.getUserId() + " · 未分配角色")
+                    : user.getUserId() + " · " + String.join("、", roleNames);
+            name.getElement().setAttribute("title", tip);
         }
 
         Button logout = new Button("退出", e -> authenticationContext.logout());
@@ -256,6 +307,16 @@ public class MainView extends VerticalLayout implements TabHost {
      * 不新开一个——否则反复点几次就会攒出一排内容一模一样的标签。
      */
     private void openTab(MenuRegistry.Item item) {
+        // 双保险：菜单渲染时已按权限过滤，这里再拦一次，
+        // 避免将来别的入口（书签、跨版本会话残留标签）绕过菜单直接开页面
+        if (!hasMenuPermission(item)) {
+            Notification notification = new Notification("没有「" + item.title() + "」的访问权限，请联系管理员分配角色");
+            notification.addThemeVariants(NotificationVariant.LUMO_ERROR);
+            notification.setPosition(Notification.Position.MIDDLE);
+            notification.setDuration(2500);
+            notification.open();
+            return;
+        }
         if (!item.implemented()) {
             Notification notification = new Notification(
                     "「" + item.title() + "」还在迁移中，功能尚未接入");

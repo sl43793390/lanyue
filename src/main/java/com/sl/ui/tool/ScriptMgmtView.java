@@ -8,7 +8,7 @@ import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.CodeEditor;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
-import com.sl.util.Constants;
+import com.sl.util.PermCodes;
 import com.vaadin.flow.component.Component;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.contextmenu.ContextMenu;
@@ -77,7 +77,7 @@ public class ScriptMgmtView extends ViewBase {
             reload();
         });
         Button addBtn = UiFactory.button("新建脚本", () -> {
-            if (!hasPermission(Constants.ADD)) {
+            if (!hasPermission(PermCodes.SCRIPT_ADD)) {
                 Dialogs.warn("权限不足，无法新建脚本");
                 return;
             }
@@ -148,7 +148,7 @@ public class ScriptMgmtView extends ViewBase {
         menu.setTarget(dots);
         menu.setOpenOnClick(true);
         menu.addItem("基于此脚本创建", e -> {
-            if (!hasPermission(Constants.ADD)) {
+            if (!hasPermission(PermCodes.SCRIPT_ADD)) {
                 Dialogs.warn("权限不足，无法创建脚本");
                 return;
             }
@@ -174,7 +174,7 @@ public class ScriptMgmtView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void confirmDelete(ScriptInfoEntity script) {
-        if (!hasPermission(Constants.DELETE)) {
+        if (!hasPermission(PermCodes.SCRIPT_DELETE)) {
             Dialogs.warn("权限不足，无法删除脚本");
             return;
         }
@@ -334,7 +334,6 @@ public class ScriptMgmtView extends ViewBase {
     // ------------------------------------------------------------------
 
     private static boolean hasPermission(String code) {
-        com.sl.entity.User user = com.sl.security.CurrentUser.get();
-        return user != null && user.hasPermission(code);
+        return com.sl.security.CurrentUser.hasPermission(code);
     }
 }

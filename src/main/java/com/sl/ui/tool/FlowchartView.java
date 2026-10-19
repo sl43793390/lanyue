@@ -9,6 +9,7 @@ import com.sl.ui.component.Dialogs;
 import com.sl.ui.component.DrawioEmbed;
 import com.sl.ui.component.UiFactory;
 import com.sl.ui.component.ViewBase;
+import com.sl.util.PermCodes;
 import com.vaadin.flow.component.button.Button;
 import com.vaadin.flow.component.combobox.ComboBox;
 import com.vaadin.flow.component.dialog.Dialog;
@@ -103,8 +104,11 @@ public class FlowchartView extends ViewBase {
         fileCombo.setClearButtonVisible(false);
         fileCombo.setWidth("240px");
         fileCombo.addValueChangeListener(e -> onComboChanged(e.getValue()));
+        // 新建 / 删除按 RBAC 按钮权限显隐：没有对应权限的账号只看不改
         Button newBtn = UiFactory.primary("新建图表", this::createNew);
+        newBtn.setVisible(com.sl.security.CurrentUser.hasPermission(PermCodes.DRAWIO_ADD));
         Button delBtn = UiFactory.danger("删除", this::deleteSelected);
+        delBtn.setVisible(com.sl.security.CurrentUser.hasPermission(PermCodes.DRAWIO_DELETE));
         updateTimeLabel.getStyle().set("color", "var(--lumo-secondary-text-color)")
                 .set("font-size", "var(--lumo-font-size-s)");
         HorizontalLayout bar = UiFactory.group(

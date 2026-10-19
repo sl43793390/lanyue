@@ -71,4 +71,20 @@ public final class CurrentUser {
         return null == id ? "system" : id;
     }
 
+    /**
+     * 当前登录用户是否持有指定权限码（RBAC）。
+     * <p>
+     * 优先读 {@link UserPrincipal} 里的有效权限快照（登录时按角色解析，含历史权限列兜底）；
+     * 快照取不到时退回 {@code users.permission} 列的旧判断。页面的按钮级权限判断统一走这里，
+     * 不要再各自 {@code user.hasPermission(code)}——那只看历史列，看不见角色授予的权限。
+     */
+    public static boolean hasPermission(String code) {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (null != auth && auth.getPrincipal() instanceof UserPrincipal principal) {
+            return principal.hasPermission(code);
+        }
+        User user = get();
+        return null != user && user.hasPermission(code);
+    }
+
 }
