@@ -15,6 +15,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
@@ -52,6 +56,8 @@ import java.util.Locale;
  * demo 数据（演示账号、示例服务器、示例项目）仍在 {@code demo.sql} / {@code demo-mysql8.sql}
  * 里——那两个脚本开头是一串 {@code DROP TABLE}，属于"给人手工初始化"的脚本，
  * 不能挂到每次启动的流程上，否则重启一次数据就没了。
+ * 例外是 {@code linux_cmd}：它有种子数据（见 {@link #seedLinuxCmd()}），
+ * 但只在表为空时导入，同样不覆盖已有数据。
  * <p>
  * 但**列改名**是另一回事，见 {@link #applyCompatMigrations()}：它只改元数据、不碰数据，
  * 而且是幂等的。留着它是因为旧库里的 {@code connection_info.desc} 用的是 MySQL 保留字，
@@ -63,6 +69,14 @@ public class DbInitializer implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(DbInitializer.class);
 
     private static final String TABLE = "users";
+
+    /**
+     * linux_cmd 的种子数据脚本（Linux 工具 → Linux 命令查询）。
+     * 由 {@code scripts/gen_linux_cmd_sql.py} 从项目根目录 {@code linux_commands.csv} 生成，
+     * 方言中立（标识符不加引号，SQLite / MySQL 8 共用一份）。
+     * 启动时仅当 {@code linux_cmd} 表为空才整份导入，见 {@link #seedLinuxCmd()}。
+     */
+    private static final String SEED_LINUX_CMD = "/seed/linux_cmd.sql";
 
     /**
      * users 表。表结构与 {@code User} 实体的 {@code @TableId} / {@code @TableField} 一一对应，
@@ -365,6 +379,12 @@ public class DbInitializer implements ApplicationRunner {
         } catch (Exception e) {
             log.error("RBAC 权限数据初始化失败，角色管理功能可能不可用", e);
         }
+        try {
+            // linux_cmd 种子数据：表为空才导入，非空跳过（幂等，不覆盖人工维护的数据）。
+            seedLinuxCmd();
+        } catch (Exception e) {
+            log.error("Linux 命令种子数据初始化失败，Linux 命令查询页面可能为空", e);
+        }
     }
 
     /* ------------------------------------------------------------------ *
@@ -625,7 +645,153 @@ public class DbInitializer implements ApplicationRunner {
     }
 
     /* ------------------------------------------------------------------ *
-     * 四、内置管理员
+     * 四、linux_cmd 种子数据
+     * ------------------------------------------------------------------ */
+
+    /**
+     * {@code linux_cmd} 表为空才导入种子数据（Linux 命令查询页的数据源）。
+     * <p>
+     * 为什么是"空才导"而不是"逐行 upsert"：这张表的内容后续由人维护
+     * （改命令说明、加新命令都直接改库），启动逻辑一旦覆盖写入，
+     * 人工修改就会被每次重启冲掉。空表只出现在两种时刻——全新部署、
+     * 或有人显式清空了表想重灌，两种情形都正是需要种子数据的时刻。
+     * <p>
+     * 种子脚本 {@link #SEED_LINUX_CMD} 是方言中立的 INSERT 列表，
+     * SQLite 与 MySQL 8 共用一份；整份导入包在事务里，中途失败整体回滚，
+     * 不会留下"导了一半"的状态。
+     */
+    private void seedLinuxCmd() {
+        try (Connection conn = dataSource.getConnection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM linux_cmd")) {
+            if (rs.next() && rs.getLong(1) > 0) {
+                return;
+            }
+        } catch (SQLException e) {
+            log.warn("检查 linux_cmd 表数据量失败，跳过种子数据导入", e);
+            return;
+        }
+        String script = readClasspathResource(SEED_LINUX_CMD);
+        if (null == script) {
+            log.warn("未找到种子数据文件 {}，Linux 命令查询页面将为空", SEED_LINUX_CMD);
+            return;
+        }
+        List<String> statements = splitSqlStatements(script);
+        try (Connection conn = dataSource.getConnection()) {
+            boolean oldAutoCommit = conn.getAutoCommit();
+            conn.setAutoCommit(false);
+            try (Statement st = conn.createStatement()) {
+                for (String sql : statements) {
+                    st.executeUpdate(sql);
+                }
+                conn.commit();
+                log.info("linux_cmd 表为空，已导入 {} 条 Linux 命令种子数据", statements.size());
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            } finally {
+                conn.setAutoCommit(oldAutoCommit);
+            }
+        } catch (SQLException e) {
+            log.error("导入 Linux 命令种子数据失败（已整体回滚），下次启动会重试", e);
+        }
+    }
+
+    /** 读 classpath 资源为 UTF-8 字符串；读不到或读失败返回 {@code null}。 */
+    private String readClasspathResource(String path) {
+        try (InputStream in = DbInitializer.class.getResourceAsStream(path)) {
+            if (null == in) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(in, StandardCharsets.UTF_8))) {
+                char[] buf = new char[4096];
+                int n;
+                while ((n = reader.read(buf)) >= 0) {
+                    sb.append(buf, 0, n);
+                }
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("读取 classpath 资源 {} 失败", path, e);
+            return null;
+        }
+    }
+
+    /**
+     * 把 SQL 脚本拆成单条语句，按分号切，但只认**字符串字面量之外**的分号。
+     * <p>
+     * 种子脚本里 cmd_params / cmd_examples 的值带换行，一条 INSERT 跨多行，
+     * 不能按行切；值里又可能出现 {@code --}（如参数示例 {@code --color}），
+     * 也不能天真的按分号切。这里做一个最小状态机：进入单引号字符串后
+     * 只认 {@code ''}（转义的引号）和收尾引号；字符串外处理 {@code --} 行注释
+     * 与 {@code /* *}{@code /} 块注释；分号只在字符串外才截断语句。
+     */
+    private static List<String> splitSqlStatements(String script) {
+        List<String> statements = new ArrayList<String>();
+        StringBuilder buf = new StringBuilder();
+        int n = script.length();
+        int i = 0;
+        boolean inString = false;
+        while (i < n) {
+            char c = script.charAt(i);
+            if (inString) {
+                buf.append(c);
+                if (c == '\'') {
+                    if (i + 1 < n && script.charAt(i + 1) == '\'') {
+                        buf.append('\'');
+                        i++;
+                    } else {
+                        inString = false;
+                    }
+                }
+                i++;
+                continue;
+            }
+            if (c == '\'') {
+                inString = true;
+                buf.append(c);
+                i++;
+                continue;
+            }
+            if (c == '-' && i + 1 < n && script.charAt(i + 1) == '-') {
+                while (i < n && script.charAt(i) != '\n') {
+                    i++;
+                }
+                buf.append(' ');
+                continue;
+            }
+            if (c == '/' && i + 1 < n && script.charAt(i + 1) == '*') {
+                i += 2;
+                while (i + 1 < n && !(script.charAt(i) == '*' && script.charAt(i + 1) == '/')) {
+                    i++;
+                }
+                i = Math.min(i + 2, n);
+                buf.append(' ');
+                continue;
+            }
+            if (c == ';') {
+                String s = buf.toString().trim();
+                if (!s.isEmpty()) {
+                    statements.add(s);
+                }
+                buf.setLength(0);
+                i++;
+                continue;
+            }
+            buf.append(c);
+            i++;
+        }
+        String tail = buf.toString().trim();
+        if (!tail.isEmpty()) {
+            statements.add(tail);
+        }
+        return statements;
+    }
+
+    /* ------------------------------------------------------------------ *
+     * 五、内置管理员
      * ------------------------------------------------------------------ */
 
     /**

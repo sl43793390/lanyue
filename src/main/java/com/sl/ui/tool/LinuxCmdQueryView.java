@@ -38,7 +38,9 @@ import java.util.List;
  *     改完点「复制」拿去终端执行。</li>
  * </ul>
  * <p>
- * 本页只读：命令手册的内容变更走 SQL（demo.sql 里有种子数据），页面上不提供增删改——
+ * 本页只读：命令手册的内容变更走 SQL（152 条种子数据在 classpath 的
+ * {@code seed/linux_cmd.sql}，由 DbInitializer 在 linux_cmd 表为空时自动导入；
+ * 源文件是项目根目录的 linux_commands.csv），页面上不提供增删改——
  * 手册数据低频变更且全局共享，做成页面编辑反而要引入权限与误改恢复的问题。
  */
 @Service

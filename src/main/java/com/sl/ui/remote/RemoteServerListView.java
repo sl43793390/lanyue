@@ -291,6 +291,18 @@ public class RemoteServerListView extends ViewBase {
         Span count = new Span(rows.size() + " 台机器");
         count.addClassName("server-group-count");
         header.add(dot, name, count);
+
+        // 中间弹性留白把删除按钮推到组名一行的最右端
+        Span headerSpacer = new Span();
+        header.add(headerSpacer);
+        header.setFlexGrow(1, headerSpacer);
+
+        // 默认分组是虚拟的（表里没有这一行），不给删除入口；其余分组有删除权限才显示
+        if (!DEFAULT_GROUP.equals(groupName) && hasPermission(PermCodes.RSERVER_DELETE)) {
+            Button deleteGroupBtn = UiFactory.rowDanger("删除", () -> confirmDeleteGroup(groupName));
+            deleteGroupBtn.setTooltipText("删除该分组（分组内有机器时不可删除）");
+            header.add(deleteGroupBtn);
+        }
         card.add(header);
 
         if (rows.isEmpty()) {
@@ -592,6 +604,55 @@ public class RemoteServerListView extends ViewBase {
             reload();
             Dialogs.success("已创建分组「" + name + "」，添加机器时可以选它");
         }
+    }
+
+    /**
+     * 删除分组：默认分组是虚拟内置的，直接拦；分组下还有机器（按库表
+     * {@code connection_info.cd_group} 实时计数，不用页面内存快照，
+     * 避免多端同时操作时误删）也拦；只有空分组才弹确认框后删
+     * {@code server_group} 表。机器归属存在连接信息行上，删分组不动机器数据。
+     */
+    private void confirmDeleteGroup(String groupName) {
+        if (DEFAULT_GROUP.equals(groupName)) {
+            Dialogs.warn("「默认分组」是内置分组，不能删除");
+            return;
+        }
+        if (!hasPermission(PermCodes.RSERVER_DELETE)) {
+            Dialogs.warn("权限不足，无法删除分组");
+            return;
+        }
+        long machineCount;
+        try {
+            machineCount = connectionInfoMapper.selectCount(
+                    new QueryWrapper<ConnectionInfo>().eq("cd_group", groupName));
+        } catch (Exception e) {
+            log.warn("统计分组 {} 下的机器数失败：{}", groupName, e.getMessage());
+            Dialogs.error("删除失败：无法确认分组下的机器数量");
+            return;
+        }
+        if (machineCount > 0) {
+            Dialogs.warn("分组「" + groupName + "」下还有 " + machineCount
+                    + " 台机器，不能删除。请先把机器移动到其它分组或删除机器后重试");
+            return;
+        }
+        Dialogs.confirmDanger("删除分组",
+                "确认删除分组「" + groupName + "」吗？删除后需要重新创建。",
+                "确认删除", () -> {
+                    int deleted;
+                    try {
+                        deleted = serverGroupMapper.deleteById(groupName);
+                    } catch (Exception e) {
+                        log.warn("删除分组 {} 失败：{}", groupName, e.getMessage());
+                        Dialogs.error("删除失败：" + StrUtil.emptyToDefault(e.getMessage(), e.getClass().getSimpleName()));
+                        return;
+                    }
+                    reload();
+                    if (deleted > 0) {
+                        Dialogs.success("已删除分组「" + groupName + "」");
+                    } else {
+                        Dialogs.warn("删除失败，分组可能刚被其他人移除");
+                    }
+                });
     }
 
     // ------------------------------------------------------------------
