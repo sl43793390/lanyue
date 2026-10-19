@@ -3,6 +3,7 @@ package com.sl.ui.tool;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.util.DefaultIndenter;
 import com.fasterxml.jackson.core.util.DefaultPrettyPrinter;
+import com.fasterxml.jackson.core.util.Separators;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sl.ui.component.CodeEditor;
@@ -49,7 +50,8 @@ public class JsonBeautifyView extends ViewBase {
      * 不是各端美化工具的常见长相。这里显式钉死。
      */
     private static final DefaultPrettyPrinter PRETTY_PRINTER = new DefaultPrettyPrinter()
-            .withoutSpacesInObjectEntries()
+            .withSeparators(Separators.createDefaultInstance()
+                    .withObjectFieldValueSpacing(Separators.Spacing.NONE))
             .withObjectIndenter(new DefaultIndenter("  ", "\n"))
             .withArrayIndenter(new DefaultIndenter("  ", "\n"));
 

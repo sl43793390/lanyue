@@ -234,9 +234,9 @@ public class RegexTestView extends ViewBase {
         previewLabel.addClassName("view-section-title");
 
         matchGrid.addColumn(MatchRow::index).setHeader("序号").setWidth("70px").setFlexGrow(0);
-        matchGrid.addColumn(MatchRow::content).setHeader("匹配内容").setClassNameGenerator(row -> "mono-cell");
+        matchGrid.addColumn(MatchRow::content).setHeader("匹配内容").setPartNameGenerator(row -> "mono-cell");
         matchGrid.addColumn(MatchRow::position).setHeader("位置").setWidth("130px").setFlexGrow(0);
-        matchGrid.addColumn(MatchRow::groups).setHeader("捕获组").setClassNameGenerator(row -> "mono-cell");
+        matchGrid.addColumn(MatchRow::groups).setHeader("捕获组").setPartNameGenerator(row -> "mono-cell");
         matchGrid.setWidthFull();
         matchGrid.setHeight("220px");
 

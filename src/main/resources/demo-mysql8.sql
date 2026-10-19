@@ -313,27 +313,6 @@ CREATE TABLE `compose_project` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ----------------------------
--- Table structure for app_setting（界面偏好 / 零散状态的通用 kv 表）
---   setting_key    键，由调用方约定，例如 compose.pref.admin；主键
---   setting_value  值，纯文本
---   update_time    最后写入时间，字符串列 yyyy-MM-dd HH:mm:ss
---
--- 长度取 191 而不是 255：191 × 4 字节 = 764，是 utf8mb4 下唯一索引的经典安全上限，
--- 老版本 InnoDB 的 767 字节限制就是这么绕过去的。MySQL 8 的 DYNAMIC 行格式其实放宽到
--- 3072 字节了，这里保持 191 是为了将来万一要用 utf8mb3 或降级部署时不用改表。
---
--- 这张表**不需要手工执行本脚本**：AppSettingStore 在容器启动时（@PostConstruct）
--- 会自己 CREATE TABLE IF NOT EXISTS 建出来，写在这里只是让表结构文档保持完整。
--- 这一段不 DROP，重复执行也不会影响已有偏好。
--- ----------------------------
-CREATE TABLE IF NOT EXISTS `app_setting` (
-    `setting_key`   VARCHAR(191) NOT NULL,
-    `setting_value` TEXT,
-    `update_time`   VARCHAR(32),
-    PRIMARY KEY (`setting_key`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- ----------------------------
 -- Table structure for linux_cmd（Linux 命令查询，Linux工具 → Linux命令查询）
 --   cmd_name      命令名，主键（命令名天然唯一，不另造 ID）
 --   cmd_category  分类（压缩打包 / 文本处理 / 网络等），列表分组排序用

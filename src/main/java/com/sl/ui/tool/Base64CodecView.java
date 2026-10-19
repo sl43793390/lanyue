@@ -15,12 +15,12 @@ import com.vaadin.flow.component.tabs.Tabs;
 import com.vaadin.flow.component.textfield.TextArea;
 import com.vaadin.flow.component.upload.Upload;
 import com.vaadin.flow.component.upload.UploadI18N;
-import com.vaadin.flow.component.upload.receivers.MemoryBuffer;
+import com.vaadin.flow.server.streams.UploadHandler;
+import com.vaadin.flow.server.streams.UploadMetadata;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Service;
 
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
@@ -30,8 +30,9 @@ import java.util.Base64;
  * 两个标签页：文字编解码（UTF-8 文本 ↔ Base64，双向）、图片编码（上传图片 → Base64，
  * 可选带 Data URI 前缀直接用于 {@code <img src>} / CSS）。
  * <p>
- * 图片上传用 {@link MemoryBuffer} 纯内存接收：字节流只进 JVM 内存，不写任何临时文件，
- * 读完立即把字节引用置空交给 GC——页面上据此向用户承诺「服务器不保存上传的图片」。
+ * 图片上传用 {@link UploadHandler#inMemory} 纯内存接收：字节流只进 JVM 内存，
+ * 不写任何临时文件，读完立即把字节引用置空交给 GC——页面上据此向用户承诺
+ * 「服务器不保存上传的图片」。
  * 解码用 {@link Base64#getMimeDecoder()}：它容忍换行/空白，浏览器和各语言工具复制出来的
  * Base64 常带折行，标准 decoder 会直接判失败，MIME decoder 全都吃得下。
  */
@@ -57,8 +58,11 @@ public class Base64CodecView extends ViewBase {
     // 图片编码页
     // ------------------------------------------------------------------
 
-    private final MemoryBuffer imageBuffer = new MemoryBuffer();
-    private final Upload imageUpload = new Upload(imageBuffer);
+    /**
+     * inMemory 回调在会话锁内的请求线程上执行（本项目已开 @Push），回调里改组件
+     * 状态会随锁释放自动推送，无需 ui.access。
+     */
+    private final Upload imageUpload = new Upload(UploadHandler.inMemory(this::convertImage));
     private final TextArea imageOutput = new TextArea("Base64 结果");
     private final Checkbox dataUriToggle = new Checkbox(
             "带 Data URI 前缀（data:image/…;base64,，可直接用于 <img src> 或 CSS background）");
@@ -153,7 +157,7 @@ public class Base64CodecView extends ViewBase {
     // ------------------------------------------------------------------
 
     private void buildImagePage() {
-        // 不落盘承诺：MemoryBuffer 纯内存接收 + 读完后立即释放字节，这句话才成立
+        // 不落盘承诺：inMemory 纯内存接收 + 转换后立即释放字节，这句话才成立
         Span notice = new Span("说明：服务器不保存上传的图片。图片只在内存中完成转换，"
                 + "转换完成后立即释放，不会写入服务器磁盘。");
         notice.getStyle().set("color", "var(--lumo-warning-text-color)");
@@ -167,7 +171,6 @@ public class Base64CodecView extends ViewBase {
         i18n.setAddFiles(new UploadI18N.AddFiles().setOne("选择图片…"));
         imageUpload.setI18n(i18n);
         imageUpload.setWidth("420px");
-        imageUpload.addSucceededListener(e -> convertImage());
 
         dataUriToggle.addValueChangeListener(e -> refreshImageOutput());
 
@@ -197,16 +200,15 @@ public class Base64CodecView extends ViewBase {
         add(imagePage);
     }
 
-    /** 上传成功：读内存字节 → 编码 → 立即丢弃字节。全程无磁盘 IO */
-    private void convertImage() {
-        try (InputStream in = imageBuffer.getInputStream()) {
-            byte[] bytes = in.readAllBytes();
-            if (bytes.length == 0) {
+    /** 上传成功回调：读内存字节 → 编码 → 立即丢弃字节。全程无磁盘 IO */
+    private void convertImage(UploadMetadata metadata, byte[] bytes) {
+        try {
+            if (bytes == null || bytes.length == 0) {
                 Dialogs.error("读到的图片内容是空的，请重新选择");
                 return;
             }
-            String mime = StrUtil.blankToDefault(imageBuffer.getFileData().getMimeType(), "image/png");
-            String name = StrUtil.blankToDefault(imageBuffer.getFileData().getFileName(), "image");
+            String mime = StrUtil.blankToDefault(metadata.contentType(), "image/png");
+            String name = StrUtil.blankToDefault(metadata.fileName(), "image");
             String base64 = Base64.getEncoder().encodeToString(bytes);
             // base64 已拿到，原始字节不再需要，立即释放
             bytes = null;

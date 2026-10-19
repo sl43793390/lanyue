@@ -84,7 +84,7 @@ public class Util {
 			return new ArrayList<String>();
 		}
 		try (InputStream in = res.getInputStream()) {
-			return IoUtil.readLines(in, "UTF-8", new ArrayList<String>());
+			return IoUtil.readLines(in, StandardCharsets.UTF_8, new ArrayList<String>());
 		} catch (IOException e1) {
 			log.error("读取配置文件 {} 失败", fileName, e1);
 		}
@@ -99,7 +99,7 @@ public class Util {
 			return new ArrayList<String>();
 		}
 		try (InputStream in = res.getInputStream()) {
-			return IoUtil.readLines(in, "UTF-8", new ArrayList<String>());
+			return IoUtil.readLines(in, StandardCharsets.UTF_8, new ArrayList<String>());
 		} catch (IOException e1) {
 			log.error("读取 userGuide.txt 失败", e1);
 		}
@@ -335,6 +335,7 @@ public class Util {
 		return pageResult;
 	}
 
+	@SafeVarargs
 	public static <T> List<List<T>> zip(List<T>... lists) {
 		List<List<T>> zipped = new ArrayList<List<T>>();
 		for (List<T> list : lists) {
@@ -498,7 +499,9 @@ public class Util {
 //       String path = "/data/logs/newblog/getbaidu.py";
         Process proc;
         try {
-            proc = Runtime.getRuntime().exec("python3 " + path);// 执行py文件
+            // ProcessBuilder 替代已废弃的 Runtime.exec(String)：参数不经空格切分，
+            // path 带空格也不会碎；逐参数传递也没有命令注入面
+            proc = new ProcessBuilder("python3", path).start();// 执行py文件
             BufferedReader in = new BufferedReader(new InputStreamReader(proc.getInputStream()));
             String line;
             while ((line = in.readLine()) != null) {

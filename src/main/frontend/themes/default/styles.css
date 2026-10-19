@@ -451,6 +451,12 @@ body {
     font-size: var(--lumo-font-size-s);
 }
 
+/* Grid 列的等宽字体走 setPartNameGenerator（setClassNameGenerator 在 Vaadin 24.4+ 已废弃） */
+vaadin-grid::part(mono-cell) {
+    font-family: var(--lumo-font-family-monospace);
+    font-size: var(--lumo-font-size-s);
+}
+
 .log-detail-name {
     max-width: 420px;
     overflow: hidden;

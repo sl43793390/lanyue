@@ -686,7 +686,7 @@ public class UserManagementView extends ViewBase {
                         return;
                     }
                     List<String> ids = new ArrayList<>(names);
-                    int affected = userDao.deleteBatchIds(ids);
+                    int affected = userDao.deleteByIds(ids);
                     log.info("删除用户 {} 个：{}", affected, ids);
                     reloadData();
                     Dialogs.success("已删除 " + affected + " 个账号");

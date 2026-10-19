@@ -73,7 +73,7 @@ public class LinuxCmdQueryView extends ViewBase {
                 .setComparator(LinuxCmd::getCmdCategory).setSortable(true).setFlexGrow(0);
         grid.addColumn(LinuxCmd::getCmdSummary).setHeader("功能说明").setFlexGrow(1);
         grid.addColumn(item -> firstExampleCommand(item)).setHeader("示例命令").setFlexGrow(1)
-                .setClassNameGenerator(item -> "mono-cell");
+                .setPartNameGenerator(item -> "mono-cell");
         grid.setSelectionMode(Grid.SelectionMode.NONE);
 
         VerticalLayout gridArea = fill(countLabel, grid);

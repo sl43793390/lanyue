@@ -261,6 +261,20 @@
         <defaultGoal>spring-boot:run</defaultGoal>
         <plugins>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <!--
+                        classpath 上唯一带注解处理器的 jar 是 log4j-core 的 PluginProcessor
+                        （为本项目的自定义 Log4j2 @Plugin 生成元数据，本项目没有自定义 @Plugin）。
+                        显式关闭编译期批注处理，消除 JDK 21 起
+                        「未来发行版的 javac 可能会禁用批注处理」的提示。
+                    -->
+                    <proc>none</proc>
+                    <!-- 编译期就暴露过时 API 与未经检查的泛型操作，2026-10-19 已清零，防止回潮 -->
+                </configuration>
+            </plugin>
+            <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
